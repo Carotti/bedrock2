@@ -161,7 +161,7 @@ Definition fib6_L_res(fuel: nat): word :=
 Definition fib6_L_resL(fuel: nat): word :=
   force_option (Map.get (fib6_L_finalL fuel).(machine).(core).(registers) var_b).
 
-Definition fib6_L_trace(fuel: nat): Log :=
+Definition fib6_L_trace(fuel: nat):=
   (fib6_L_finalL fuel).(log).
 
 (* only uncomment this if you're sure there are no admits in the computational parts,
