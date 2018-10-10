@@ -1,5 +1,6 @@
 Require Import riscv.util.Word.
 Require Import riscv.util.BitWidths.
+Require Import riscv.MinimalLogging.
 Require Import compiler.util.Common.
 Require Import compiler.util.Tactics.
 Require Import compiler.Op.
@@ -67,3 +68,27 @@ Goal finalFibVal 3 = Some (ZToWord 32  3). reflexivity. Qed.
 Goal finalFibVal 4 = Some (ZToWord 32  5). reflexivity. Qed.
 Goal finalFibVal 5 = Some (ZToWord 32  8). reflexivity. Qed.
 Goal finalFibVal 6 = Some (ZToWord 32 13). reflexivity. Qed.
+
+Definition eval_stmt_log_test fuel initialSt := @eval_stmt_log (word 32) _ _ _ _ (List_Map _ _) empty_map fuel initialSt EmptyMetricLog no_mem.
+
+Example finalFibLogState(n: Z) := (eval_stmt_log_test 100 empty_map (fib n)).
+
+Example finalFibLogVal(n: Z) : option (word 32) := match finalFibLogState n with
+| Some (s, _, _) => get s _b
+| _ => None
+end.
+
+Example finalFibLogMetrics(n: Z) := match finalFibLogState n with
+| Some (_, log, _) => log
+| _ => EmptyMetricLog
+end.
+
+Goal finalFibLogVal 0 = Some (ZToWord 32  1). reflexivity. Qed.
+Goal finalFibLogVal 1 = Some (ZToWord 32  1). reflexivity. Qed.
+Goal finalFibLogVal 2 = Some (ZToWord 32  2). reflexivity. Qed.
+Goal finalFibLogVal 3 = Some (ZToWord 32  3). reflexivity. Qed.
+Goal finalFibLogVal 4 = Some (ZToWord 32  5). reflexivity. Qed.
+Goal finalFibLogVal 5 = Some (ZToWord 32  8). reflexivity. Qed.
+Goal finalFibLogVal 6 = Some (ZToWord 32 13). reflexivity. Qed.
+
+Eval cbv in (finalFibLogMetrics 10).

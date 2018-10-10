@@ -1,6 +1,7 @@
 Require Import lib.LibTacticsMin.
 Require Import riscv.util.BitWidths.
 Require Import riscv.Utility.
+Require Import riscv.MinimalLogging.
 Require Import compiler.util.Common.
 Require Import compiler.util.Tactics.
 Require Import compiler.Op.
@@ -92,6 +93,57 @@ Section FlatImp1.
           retvs <- option_all (List.map (get st1) rets);
           st' <- putmany binds retvs st;
           Return (st', m')
+        end
+      end.
+
+    Fixpoint eval_stmt_log(f: nat)(st: state)(log: MetricLog)(m: mem)(s: stmt): option (state * MetricLog * mem) :=
+      match f with
+      | 0 => None (* out of fuel *)
+      | S f => match s with
+        | SLoad x a =>
+            a <- get st a;
+            v <- read_mem a m;
+            Return (put st x v, incMetricLoads log, m)
+        | SStore a v =>
+            a <- get st a;
+            v <- get st v;
+            m <- write_mem a v m;
+            Return (st, incMetricStores log, m)
+        | SLit x v =>
+            Return (put st x (ZToReg v), incMetricInstructions log, m)
+        | SOp x op y z =>
+            y <- get st y;
+            z <- get st z;
+            Return (put st x (eval_binop op y z), incMetricInstructions log, m)
+        | SSet x y =>
+            v <- get st y;
+            Return (put st x v, log, m)
+        | SIf cond bThen bElse =>
+            vcond <- get st cond;
+            eval_stmt_log f st (incMetricJumps log) m (if reg_eqb vcond (ZToReg 0) then bElse else bThen)
+        | SLoop body1 cond body2 =>
+            p <- eval_stmt_log f st log m body1;
+            let '(st, log, m) := p in
+            vcond <- get st cond;
+            if reg_eqb vcond (ZToReg 0) then Return (st, incMetricJumps log, m) else
+              q <- eval_stmt_log f st log m body2;
+              let '(st, log, m) := q in
+              eval_stmt_log f st (incMetricJumps log) m (SLoop body1 cond body2)
+        | SSeq s1 s2 =>
+            p <- eval_stmt_log f st log m s1;
+            let '(st, log, m) := p in
+            eval_stmt_log f st log m s2
+        | SSkip => Return (st, log, m)
+        | SCall binds fname args =>
+          fimpl <- get e fname;
+          let '(params, rets, fbody) := fimpl in
+          argvs <- option_all (List.map (get st) args);
+          st0 <- putmany params argvs empty_map;
+          st1m' <- eval_stmt_log f st0 log m fbody;
+          let '(st1, log, m') := st1m' in
+          retvs <- option_all (List.map (get st1) rets);
+          st' <- putmany binds retvs st;
+          Return (st', log, m')
         end
       end.
 
