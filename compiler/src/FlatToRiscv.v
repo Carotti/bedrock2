@@ -29,6 +29,7 @@ Require Import riscv.Utility.
 Require Import riscv.util.ZBitOps.
 Require Import compiler.util.Common.
 Require Import riscv.Utility.
+Require Import riscv.MinimalLogging.
 
 (* TODO remove these three *)
 Require Import riscv.MachineWidth_XLEN.
@@ -1851,6 +1852,30 @@ Section FlatToRiscv.
       exact Q.
     }      
   Qed.
+
+  Context {RVML: RiscvProgram (OState (@RiscvMachineMetricLog mword mem state)) mword}.
+  Context {RVSL: @RiscvState (OState RiscvMachineMetricLog) mword _ _ RVML}.
+
+  Lemma compile_bounds_instructions:
+    forall imemStart fuelH s insts initialMH finalH finalMH 
+      initialL finalLogH 
+      (finalL : @RiscvMachineMetricLog mword mem state),
+    compile_stmt s = insts ->
+    stmt_not_too_big s ->
+    valid_registers s ->
+    divisibleBy4 imemStart ->
+    eval_stmt_log _ _ empty_map fuelH empty_map EmptyMetricLog initialMH s = Some (finalH, finalLogH, finalMH) ->
+    containsMem initialL.(machine).(machineMem) initialMH ->
+    containsProgram initialL.(machine).(machineMem) insts imemStart ->
+    initialL.(machine).(core).(pc) = imemStart ->
+    initialL.(machine).(core).(nextPC) = add initialL.(machine).(core).(pc) (ZToReg 4) ->
+    initialL.(log) = EmptyMetricLog ->
+    exists fuelL c,
+      let finalLogL := (execState (run (B := BitWidth) fuelL) initialL).(log) in
+      finalLogL.(instructions) < finalLogH.(instructions) * c.
+  Proof.
+  intros.
+  Admitted.
 
   Print Assumptions compile_stmt_correct.
 End FlatToRiscv.
