@@ -1856,26 +1856,199 @@ Section FlatToRiscv.
   Context {RVML: RiscvProgram (OState (@RiscvMachineMetricLog mword mem state)) mword}.
   Context {RVSL: @RiscvState (OState RiscvMachineMetricLog) mword _ _ RVML}.
 
-  Lemma compile_bounds_instructions:
-    forall imemStart fuelH s insts initialMH finalH finalMH 
-      initialL finalLogH 
-      (finalL : @RiscvMachineMetricLog mword mem state),
+  Lemma eval_stmt_equivalent:
+    forall fuelH initialMH initialH s finalH finalMH finalLogH,
+    eval_stmt_log _ _ empty_map fuelH initialH EmptyMetricLog initialMH s = Some (finalH, finalLogH, finalMH) ->
+    eval_stmt _ _ empty_map fuelH initialH initialMH s = Some (finalH, finalMH).
+  Proof.
+  Admitted.
+
+  Definition runsTo_onerun_log(initial: RiscvMachineMetricLog)(P: RiscvMachineMetricLog -> Prop): Prop :=
+    exists fuel,
+      match run (B := BitWidth) fuel initial with
+      | (Some _, final) => P final
+      | (None  , final) => False
+      end.
+
+  Inductive runsTo_log: RiscvMachineMetricLog -> (RiscvMachineMetricLog -> Prop) -> Prop :=
+    | runsToDone_log: forall (initial: RiscvMachineMetricLog) (P: RiscvMachineMetricLog -> Prop),
+        P initial ->
+        runsTo_log initial P
+    | runsToStep_log: forall (initial middle: RiscvMachineMetricLog) (P: RiscvMachineMetricLog -> Prop),
+        run1 (B := BitWidth) initial = (Some tt, middle) ->
+        runsTo_log middle P ->
+        runsTo_log initial P.
+
+  Lemma runsTo_to_onerun_log: forall initial (P: RiscvMachineMetricLog -> Prop),
+      runsTo_log initial P ->
+      runsTo_onerun_log initial P.
+  Proof.
+    unfold runsTo_onerun_log. induction 1.
+    - exists O. simpl. assumption.
+    - destruct IHrunsTo_log as [fuel IH].
+      exists (S fuel). unfold run, power_func.
+      match goal with
+      | |- context [?t] =>
+           match t with
+           | Bind _  _ =>
+             match t with
+             | ?B _ _ => let B' := eval cbv in B in change B with B'
+             end
+           end
+      end.
+      cbv beta.
+      rewrite H.
+      exact IH.
+  Qed.
+
+  Lemma runsTo_from_onerun_log: forall initial (P: RiscvMachineMetricLog -> Prop),
+      runsTo_onerun_log initial P ->
+      runsTo_log initial P.
+  Proof.
+    unfold runsTo_onerun_log. intros. destruct H as [fuel H].
+    revert H. revert P. revert initial.
+    induction fuel; intros.
+    - apply runsToDone_log. exact H.
+    - unfold run, power_func, Bind, OState_Monad in H.
+      match type of H with
+      | context [?t] =>
+        match t with
+        | run1 initial =>  destruct t as [ [u1 | ] s1 ] eqn: E1; [|contradiction]
+        end
+      end.
+      destruct u1.
+      eapply runsToStep_log; [exact E1|].
+      apply IHfuel.
+      exact H.
+  Qed.
+
+  Lemma runsTo_alt_equiv_log: forall initial (P: RiscvMachineMetricLog -> Prop),
+      runsTo_onerun_log initial P <-> runsTo_log initial P.
+  Proof.
+    intros. split.
+    - apply runsTo_from_onerun_log.
+    - apply runsTo_to_onerun_log.
+  Qed.
+
+  Lemma runsToSatisfying_trans_log: forall P Q initial,
+    runsTo_log initial P ->
+    (forall middle, P middle -> runsTo_log middle Q) ->
+    runsTo_log initial Q.
+  Proof.
+    introv R1. induction R1; introv R2; [solve [auto]|].
+    eapply runsToStep_log; [eassumption|]. apply IHR1. apply R2.
+  Qed.
+
+  Lemma runsToSatisfying_imp_log: forall (P Q : RiscvMachineMetricLog -> Prop) initial,
+    runsTo_log initial P ->
+    (forall final, P final -> Q final) ->
+    runsTo_log initial Q.
+  Proof using .
+    introv R1 R2. eapply runsToSatisfying_trans_log; [eassumption|].
+    intros final Pf. apply runsToDone_log. auto.
+  Qed.
+
+  Definition runsToSatisfying_log: RiscvMachineMetricLog -> (RiscvMachineMetricLog -> Prop) -> Prop := runsTo_log.
+
+  Ltac invert_eval_stmt_log :=
+    match goal with
+    | E: eval_stmt_log _ _ _ (S ?fuel) _ _ _ ?s = Some _ |- _ =>
+      apply eval_stmt_equivalent in E as HNoLog; invert_eval_stmt
+    end.
+
+  Ltac destruct_RiscvMachine_log l :=
+    destruct l as [ m log ];
+    destruct_RiscvMachine m.
+
+  Lemma run1_simpl_log: forall {inst initialL pc0},
+    containsProgram initialL.(machine).(machineMem) [[inst]] pc0 ->
+    pc0 = initialL.(machine).(core).(pc) ->
+    run1 (B := BitWidth) initialL = (execute inst;; step) initialL.
+  Proof.
+    intros. subst *.
+    unfold run1.
+    destruct initialL as [ m log ].
+    destruct_RiscvMachine m.
+    Admitted.
+    (*
+    rewrite Bind_getPC.
+    simpl_RiscvMachine_get_set.
+    rewrite Bind_loadWord.
+    unfold containsProgram in H. apply proj2 in H.
+    specialize (H 0 _ eq_refl). subst inst.
+    unfold ldInst.
+    simpl_RiscvMachine_get_set.
+    repeat match goal with
+           | |- context[?x] => progress (ring_simplify x)
+           end.
+    reflexivity.
+  Qed. *)
+
+  Ltac fetch_inst_log :=
+  match goal with
+  | Cp: containsProgram _ [[?inst]] ?pc0 |- ?E = (Some tt, _) =>
+    match E with
+    | run1 ?initialL =>
+        let Eqpc := fresh in
+         assert (pc0 = initialL.(machine).(core).(pc)) as Eqpc by auto;
+         replace E with ((execute inst;; step) initialL) by
+         (symmetry; eapply run1_simpl_log; [ exact Cp | exact Eqpc ]);
+      clear Eqpc
+    end
+  end.
+
+  Lemma execute_load_log: forall {A: Type} (x a: Register) (addr v: mword) (initialMH: Memory.mem)
+         (f:unit -> OState RiscvMachineMetricLog A) (initialL: RiscvMachineMetricLog) initialRegsH,
+    valid_register x ->
+    valid_register a ->
+    Memory.read_mem addr initialMH = Some v ->
+    containsMem initialL.(machine).(machineMem) initialMH ->
+    get initialRegsH a = Some addr ->
+    extends initialL.(machine).(core).(registers) initialRegsH ->
+    (Bind (execute (LwXLEN x a 0)) f) initialL =
+    (f tt) (with_machine
+      (with_registers
+        (setReg initialL.(machine).(core).(registers) x v) initialL.(machine))
+      initialL).
+  Proof.
+  Admitted.
+
+ Lemma compile_bounds_instructions:
+    forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH initialL
+      instsBefore instsAfter logH,
     compile_stmt s = insts ->
+    allInsts = instsBefore ++ insts ++ instsAfter ->  
     stmt_not_too_big s ->
     valid_registers s ->
     divisibleBy4 imemStart ->
-    eval_stmt_log _ _ empty_map fuelH empty_map EmptyMetricLog initialMH s = Some (finalH, finalLogH, finalMH) ->
+    eval_stmt_log _ _ empty_map fuelH initialH EmptyMetricLog initialMH s = Some (finalH, logH, finalMH) ->
+    extends initialL.(machine).(core).(registers) initialH ->
     containsMem initialL.(machine).(machineMem) initialMH ->
-    containsProgram initialL.(machine).(machineMem) insts imemStart ->
-    initialL.(machine).(core).(pc) = imemStart ->
+    containsProgram initialL.(machine).(machineMem) allInsts imemStart ->
+    initialL.(machine).(core).(pc) = add imemStart (mul (ZToReg 4) (ZToReg (Zlength instsBefore))) ->
     initialL.(machine).(core).(nextPC) = add initialL.(machine).(core).(pc) (ZToReg 4) ->
-    initialL.(log) = EmptyMetricLog ->
-    exists fuelL c,
-      let finalLogL := (execState (run (B := BitWidth) fuelL) initialL).(log) in
-      finalLogL.(instructions) < finalLogH.(instructions) * c.
+    mem_inaccessible initialMH (regToZ_unsigned imemStart) (4 * Zlength allInsts) ->
+    runsToSatisfying_log initialL (fun finalL =>
+      finalL.(log).(instructions) < 50 * logH.(instructions)).
   Proof.
-  intros.
-  Admitted.
+    intros allInsts imemStart. pose proof (mkAllInsts allInsts).
+    induction fuelH; [intros; discriminate |].
+    intros.
+    invert_eval_stmt_log.
+      try match goal with
+          | o: bopname |- _ => destruct o (* do this before destruct_containsProgram *)
+          end;
+      simpl in *; unfold compile_lit, compile_lit_rec in *;
+      destruct_everything.
 
+    - (* SLoad *)
+      clear IHfuelH.
+      eapply runsToStep_log; simpl in *; subst *.
+      + fetch_inst_log.
+        erewrite execute_load_log; [|eassumption..].
+        rewrite execState_step.
+        simpl_RiscvMachine_get_set.
+        reflexivity.
+      + run1done.
   Print Assumptions compile_stmt_correct.
 End FlatToRiscv.

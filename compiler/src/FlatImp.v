@@ -103,12 +103,12 @@ Section FlatImp1.
         | SLoad x a =>
             a <- get st a;
             v <- read_mem a m;
-            Return (put st x v, incMetricLoads log, m)
+            Return (put st x v, incMetricInstructions (incMetricLoads log), m)
         | SStore a v =>
             a <- get st a;
             v <- get st v;
             m <- write_mem a v m;
-            Return (st, incMetricStores log, m)
+            Return (st, incMetricInstructions (incMetricStores log), m)
         | SLit x v =>
             Return (put st x (ZToReg v), incMetricInstructions log, m)
         | SOp x op y z =>
