@@ -21,7 +21,7 @@ Require Import compiler.Decidable.
 Require Import Coq.Program.Tactics.
 Require Import riscv.InstructionCoercions.
 Require Import compiler.StateCalculus.
-Require Import riscv.AxiomaticRiscv.
+Require Import riscv.AxiomaticRiscvLogging.
 Require Import Coq.micromega.Lia.
 Require Import riscv.util.div_mod_to_quot_rem.
 Require Import compiler.util.Misc.
@@ -235,20 +235,23 @@ Section FlatToRiscv.
   
   Context {funcMap: MapFunctions Z (list Z * list Z * stmt)}. (* TODO meh *)
 
-  Context {t: Set}.
   Context {mem: Set}.
   Context {IsMem: Memory.Memory mem mword}.
   Context {BWS: FlatToRiscvBitWidthSpecifics mword mem}.
   Context {BWSP: FlatToRiscvBitWidthSpecificProofs mword mem}.
 
   Local Notation RiscvMachineNoLog := (@RiscvMachine mword mem state).
-  Local Notation RiscvMachine := (@RiscvMachineMetricLog mword mem state).
-  
+  Local Notation RiscvMachine := (@RiscvMachineLog mword mem state MetricLog).
+
   Context {RVM: RiscvProgram (OState RiscvMachine) mword}.
-  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.
+
+  (* assumes generic translate and raiseException functions *)
+  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.  
+  
+  Context {RVAX: @AxiomaticRiscvL mword _ state State_is_RegisterFile mem _ RVM}.
 
   Ltac state_calc := state_calc_generic Z mword.
-
+  
   (* This phase assumes that register allocation has already been done on the FlatImp
      level, and expects the following to hold: *)
   Fixpoint valid_registers(s: stmt): Prop :=
@@ -1040,16 +1043,16 @@ Section FlatToRiscv.
   
   Ltac simpl_RiscvMachine_get_set := autorewrite with rew_RiscvMachine_get_set in *.
 
-  Ltac destruct_RiscvMachine ma :=
-    destruct ma as [m log];
+  Ltac destruct_RiscvMachine m :=
     let t := type of m in
-    unify t RiscvMachineNoLog;
+    unify t RiscvMachine;
     let r := fresh m "_regs" in
     let p := fresh m "_pc" in
     let n := fresh m "_npc" in
     let e := fresh m "_eh" in
     let me := fresh m "_mem" in
-    destruct m as [ [r p n e] me ];
+    let l := fresh m "_log" in
+    destruct m as [ [ [r p n e] me] l ];
     simpl_RiscvMachine_get_set.
 
   Arguments Z.modulo : simpl never.
@@ -1063,8 +1066,6 @@ Section FlatToRiscv.
     unfold run1.
     destruct_RiscvMachine initialL.
     simpl_RiscvMachine_get_set.
-    Admitted.
- (*
     rewrite Bind_getPC.
     simpl_RiscvMachine_get_set.
     rewrite Bind_loadWord.
@@ -1076,7 +1077,7 @@ Section FlatToRiscv.
            | |- context[?x] => progress (ring_simplify x)
            end.
     reflexivity.
-  Qed. 
+  Admitted. 
 
   Hint Rewrite
       (@associativity  _ (OState_Monad RiscvMachine))
@@ -1088,7 +1089,7 @@ Section FlatToRiscv.
       (@Bind_setRegister0 _ _ _ _ _ _ _)
       (@Bind_getPC _ _ _ _ _ _ _)
       (@Bind_setPC _ _ _ _ _ _ _)
-  using assumption : rew_get_set_Register.*)
+  using assumption : rew_get_set_Register.
 
   Ltac do_get_set_Register := autorewrite with rew_get_set_Register.
 
@@ -1649,12 +1650,6 @@ Section FlatToRiscv.
   Proof using .
   Admitted.
   
-  (* Admitted axiomatic lemmas *)
-  Lemma execState_step: forall m,
-      step m = (Some tt, with_nextPC_log (add m.(core).(nextPC) (ZToReg 4)) (with_pc_log m.(core).(nextPC) m)).
-  Proof.
-  Admitted.
-  
   Lemma compile_stmt_correct_aux:
     forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH (initialL : RiscvMachine)
       instsBefore instsAfter,
@@ -1778,6 +1773,7 @@ Section FlatToRiscv.
       run1step.
       run1done.
 
+
     - (* SIf/Else *)
       (* branch if cond = 0 (will  branch) *)
       run1step.
@@ -1827,7 +1823,7 @@ Section FlatToRiscv.
   Qed.
 
   Lemma compile_stmt_correct:
-    forall imemStart fuelH s insts initialMH finalH finalMH initialL,
+    forall imemStart fuelH s insts initialMH finalH finalMH (initialL : RiscvMachine),
     compile_stmt s = insts ->
     stmt_not_too_big s ->
     valid_registers s ->
