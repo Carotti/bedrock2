@@ -235,19 +235,18 @@ Section FlatToRiscv.
   
   Context {funcMap: MapFunctions Z (list Z * list Z * stmt)}. (* TODO meh *)
 
+  Context {t: Set}.
   Context {mem: Set}.
   Context {IsMem: Memory.Memory mem mword}.
   Context {BWS: FlatToRiscvBitWidthSpecifics mword mem}.
   Context {BWSP: FlatToRiscvBitWidthSpecificProofs mword mem}.
-                
-  Local Notation RiscvMachine := (@RiscvMachine mword mem state).
-  Context {RVM: RiscvProgram (OState RiscvMachine) mword}.
 
-  (* assumes generic translate and raiseException functions *)
-  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.  
-
-  Context {RVAX: @AxiomaticRiscv mword _ state State_is_RegisterFile mem _ RVM}.
+  Local Notation RiscvMachineNoLog := (@RiscvMachine mword mem state).
+  Local Notation RiscvMachine := (@RiscvMachineMetricLog mword mem state).
   
+  Context {RVM: RiscvProgram (OState RiscvMachine) mword}.
+  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.
+
   Ltac state_calc := state_calc_generic Z mword.
 
   (* This phase assumes that register allocation has already been done on the FlatImp
@@ -980,7 +979,23 @@ Section FlatToRiscv.
   Lemma simpl_with_machineMem: forall (c: @RiscvMachineCore _ state) (m1 m2: mem),
     with_machineMem (mword := mword) m2 (mkRiscvMachine c m1) =
                                         (mkRiscvMachine c m2).
-  Proof. intros. reflexivity. Qed.  
+  Proof. intros. reflexivity. Qed.
+
+  Lemma simpl_with_registers_log: forall r1 (m : RiscvMachineNoLog) (Log : Type) (l : Log),
+    with_registers_log r1 (mkRiscvMachineLog Log m l) = mkRiscvMachineLog Log (with_registers r1 m) l.
+  Proof. intros. reflexivity. Qed.
+
+  Lemma simpl_with_pc_log: forall pc (m : RiscvMachineNoLog) (Log : Type) (l : Log),
+    with_pc_log pc (mkRiscvMachineLog Log m l) = mkRiscvMachineLog Log (with_pc pc m) l.
+  Proof. intros. reflexivity. Qed.
+  
+  Lemma simpl_with_nextPC_log: forall npc (m : RiscvMachineNoLog) (Log : Type) (l : Log),
+    with_nextPC_log npc (mkRiscvMachineLog Log m l) = mkRiscvMachineLog Log (with_nextPC npc m) l.
+  Proof. intros. reflexivity. Qed.
+  
+  Lemma simpl_with_machineMem_log: forall mm (m : RiscvMachineNoLog) (Log : Type) (l : Log),
+    with_machineMem_log mm (mkRiscvMachineLog Log m l) = mkRiscvMachineLog Log (with_machineMem mm m) l.
+  Proof. intros. reflexivity. Qed.
 
   Lemma simpl_registers: forall (rs: state) p npc eh,
     registers (mword := mword) (mkRiscvMachineCore rs p npc eh) = rs.
@@ -997,6 +1012,10 @@ Section FlatToRiscv.
   Lemma simpl_core: forall (c: @RiscvMachineCore _ state) (m: mem),
     core (mword := mword) (mkRiscvMachine c m) = c.
   Proof. intros. reflexivity. Qed.  
+  
+  Lemma simpl_core_log: forall (c: @RiscvMachineCore _ state) (m: mem) (Log : Type) (l : Log),
+    core (mword := mword) (mkRiscvMachineLog Log (mkRiscvMachine c m) l) = c.
+  Proof. intros. reflexivity. Qed.  
 
   Lemma simpl_machineMem: forall (c: @RiscvMachineCore mword state) (m: mem),
     machineMem (mkRiscvMachine c m) = m.
@@ -1007,18 +1026,24 @@ Section FlatToRiscv.
       simpl_with_pc
       simpl_with_nextPC
       simpl_with_machineMem
+      simpl_with_registers_log
+      simpl_with_pc_log
+      simpl_with_nextPC_log
+      simpl_with_machineMem_log
       simpl_registers
       simpl_pc
       simpl_nextPC
       simpl_core
+      simpl_core_log
       simpl_machineMem
   : rew_RiscvMachine_get_set.
   
   Ltac simpl_RiscvMachine_get_set := autorewrite with rew_RiscvMachine_get_set in *.
 
-  Ltac destruct_RiscvMachine m :=
+  Ltac destruct_RiscvMachine ma :=
+    destruct ma as [m log];
     let t := type of m in
-    unify t RiscvMachine;
+    unify t RiscvMachineNoLog;
     let r := fresh m "_regs" in
     let p := fresh m "_pc" in
     let n := fresh m "_npc" in
@@ -1030,13 +1055,16 @@ Section FlatToRiscv.
   Arguments Z.modulo : simpl never.
   
   Lemma run1_simpl: forall {inst initialL pc0},
-      containsProgram initialL.(machineMem) [[inst]] pc0 ->
+      containsProgram initialL.(machine).(machineMem) [[inst]] pc0 ->
       pc0 = initialL.(core).(pc) ->
       run1 (B := BitWidth) initialL = (execute inst;; step) initialL.
   Proof.
     intros. subst *.
     unfold run1.
     destruct_RiscvMachine initialL.
+    simpl_RiscvMachine_get_set.
+    Admitted.
+ (*
     rewrite Bind_getPC.
     simpl_RiscvMachine_get_set.
     rewrite Bind_loadWord.
@@ -1060,7 +1088,7 @@ Section FlatToRiscv.
       (@Bind_setRegister0 _ _ _ _ _ _ _)
       (@Bind_getPC _ _ _ _ _ _ _)
       (@Bind_setPC _ _ _ _ _ _ _)
-  using assumption : rew_get_set_Register.
+  using assumption : rew_get_set_Register.*)
 
   Ltac do_get_set_Register := autorewrite with rew_get_set_Register.
 
@@ -1383,7 +1411,7 @@ Section FlatToRiscv.
       get initialRegsH a = Some addr ->
       extends initialL.(core).(registers) initialRegsH ->
       (Bind (execute (LwXLEN x a 0)) f) initialL =
-      (f tt) (with_registers (setReg initialL.(core).(registers) x v) initialL).
+      (f tt) (with_registers_log (setReg initialL.(core).(registers) x v) initialL).
   Proof. (*
     intros.
     pose proof (@Bind_getRegister _ _ _ _ _ _ _) as Bind_getRegister.
@@ -1429,7 +1457,7 @@ Section FlatToRiscv.
       get initialRegsH rv = Some v ->
       extends initialL.(core).(registers) initialRegsH ->
       (Bind (execute (SwXLEN ra rv 0)) f) initialL =
-      (f tt) (with_machineMem (storeWordwXLEN initialL.(machineMem) a v) initialL).
+      (f tt) (with_machineMem_log (storeWordwXLEN initialL.(machineMem) a v) initialL).
   Proof.
     (*
     intros.
@@ -1621,8 +1649,14 @@ Section FlatToRiscv.
   Proof using .
   Admitted.
   
+  (* Admitted axiomatic lemmas *)
+  Lemma execState_step: forall m,
+      step m = (Some tt, with_nextPC_log (add m.(core).(nextPC) (ZToReg 4)) (with_pc_log m.(core).(nextPC) m)).
+  Proof.
+  Admitted.
+  
   Lemma compile_stmt_correct_aux:
-    forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH initialL
+    forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH (initialL : RiscvMachine)
       instsBefore instsAfter,
     compile_stmt s = insts ->
     allInsts = instsBefore ++ insts ++ instsAfter ->  
@@ -1853,202 +1887,5 @@ Section FlatToRiscv.
     }      
   Qed.
 
-  Context {RVML: RiscvProgram (OState (@RiscvMachineMetricLog mword mem state)) mword}.
-  Context {RVSL: @RiscvState (OState RiscvMachineMetricLog) mword _ _ RVML}.
-
-  Lemma eval_stmt_equivalent:
-    forall fuelH initialMH initialH s finalH finalMH finalLogH,
-    eval_stmt_log _ _ empty_map fuelH initialH EmptyMetricLog initialMH s = Some (finalH, finalLogH, finalMH) ->
-    eval_stmt _ _ empty_map fuelH initialH initialMH s = Some (finalH, finalMH).
-  Proof.
-  Admitted.
-
-  Definition runsTo_onerun_log(initial: RiscvMachineMetricLog)(P: RiscvMachineMetricLog -> Prop): Prop :=
-    exists fuel,
-      match run (B := BitWidth) fuel initial with
-      | (Some _, final) => P final
-      | (None  , final) => False
-      end.
-
-  Inductive runsTo_log: RiscvMachineMetricLog -> (RiscvMachineMetricLog -> Prop) -> Prop :=
-    | runsToDone_log: forall (initial: RiscvMachineMetricLog) (P: RiscvMachineMetricLog -> Prop),
-        P initial ->
-        runsTo_log initial P
-    | runsToStep_log: forall (initial middle: RiscvMachineMetricLog) (P: RiscvMachineMetricLog -> Prop),
-        run1 (B := BitWidth) initial = (Some tt, middle) ->
-        runsTo_log middle P ->
-        runsTo_log initial P.
-
-  Lemma runsTo_to_onerun_log: forall initial (P: RiscvMachineMetricLog -> Prop),
-      runsTo_log initial P ->
-      runsTo_onerun_log initial P.
-  Proof.
-    unfold runsTo_onerun_log. induction 1.
-    - exists O. simpl. assumption.
-    - destruct IHrunsTo_log as [fuel IH].
-      exists (S fuel). unfold run, power_func.
-      match goal with
-      | |- context [?t] =>
-           match t with
-           | Bind _  _ =>
-             match t with
-             | ?B _ _ => let B' := eval cbv in B in change B with B'
-             end
-           end
-      end.
-      cbv beta.
-      rewrite H.
-      exact IH.
-  Qed.
-
-  Lemma runsTo_from_onerun_log: forall initial (P: RiscvMachineMetricLog -> Prop),
-      runsTo_onerun_log initial P ->
-      runsTo_log initial P.
-  Proof.
-    unfold runsTo_onerun_log. intros. destruct H as [fuel H].
-    revert H. revert P. revert initial.
-    induction fuel; intros.
-    - apply runsToDone_log. exact H.
-    - unfold run, power_func, Bind, OState_Monad in H.
-      match type of H with
-      | context [?t] =>
-        match t with
-        | run1 initial =>  destruct t as [ [u1 | ] s1 ] eqn: E1; [|contradiction]
-        end
-      end.
-      destruct u1.
-      eapply runsToStep_log; [exact E1|].
-      apply IHfuel.
-      exact H.
-  Qed.
-
-  Lemma runsTo_alt_equiv_log: forall initial (P: RiscvMachineMetricLog -> Prop),
-      runsTo_onerun_log initial P <-> runsTo_log initial P.
-  Proof.
-    intros. split.
-    - apply runsTo_from_onerun_log.
-    - apply runsTo_to_onerun_log.
-  Qed.
-
-  Lemma runsToSatisfying_trans_log: forall P Q initial,
-    runsTo_log initial P ->
-    (forall middle, P middle -> runsTo_log middle Q) ->
-    runsTo_log initial Q.
-  Proof.
-    introv R1. induction R1; introv R2; [solve [auto]|].
-    eapply runsToStep_log; [eassumption|]. apply IHR1. apply R2.
-  Qed.
-
-  Lemma runsToSatisfying_imp_log: forall (P Q : RiscvMachineMetricLog -> Prop) initial,
-    runsTo_log initial P ->
-    (forall final, P final -> Q final) ->
-    runsTo_log initial Q.
-  Proof using .
-    introv R1 R2. eapply runsToSatisfying_trans_log; [eassumption|].
-    intros final Pf. apply runsToDone_log. auto.
-  Qed.
-
-  Definition runsToSatisfying_log: RiscvMachineMetricLog -> (RiscvMachineMetricLog -> Prop) -> Prop := runsTo_log.
-
-  Ltac invert_eval_stmt_log :=
-    match goal with
-    | E: eval_stmt_log _ _ _ (S ?fuel) _ _ _ ?s = Some _ |- _ =>
-      apply eval_stmt_equivalent in E as HNoLog; invert_eval_stmt
-    end.
-
-  Ltac destruct_RiscvMachine_log l :=
-    destruct l as [ m log ];
-    destruct_RiscvMachine m.
-
-  Lemma run1_simpl_log: forall {inst initialL pc0},
-    containsProgram initialL.(machine).(machineMem) [[inst]] pc0 ->
-    pc0 = initialL.(machine).(core).(pc) ->
-    run1 (B := BitWidth) initialL = (execute inst;; step) initialL.
-  Proof.
-    intros. subst *.
-    unfold run1.
-    destruct initialL as [ m log ].
-    destruct_RiscvMachine m.
-    Admitted.
-    (*
-    rewrite Bind_getPC.
-    simpl_RiscvMachine_get_set.
-    rewrite Bind_loadWord.
-    unfold containsProgram in H. apply proj2 in H.
-    specialize (H 0 _ eq_refl). subst inst.
-    unfold ldInst.
-    simpl_RiscvMachine_get_set.
-    repeat match goal with
-           | |- context[?x] => progress (ring_simplify x)
-           end.
-    reflexivity.
-  Qed. *)
-
-  Ltac fetch_inst_log :=
-  match goal with
-  | Cp: containsProgram _ [[?inst]] ?pc0 |- ?E = (Some tt, _) =>
-    match E with
-    | run1 ?initialL =>
-        let Eqpc := fresh in
-         assert (pc0 = initialL.(machine).(core).(pc)) as Eqpc by auto;
-         replace E with ((execute inst;; step) initialL) by
-         (symmetry; eapply run1_simpl_log; [ exact Cp | exact Eqpc ]);
-      clear Eqpc
-    end
-  end.
-
-  Lemma execute_load_log: forall {A: Type} (x a: Register) (addr v: mword) (initialMH: Memory.mem)
-         (f:unit -> OState RiscvMachineMetricLog A) (initialL: RiscvMachineMetricLog) initialRegsH,
-    valid_register x ->
-    valid_register a ->
-    Memory.read_mem addr initialMH = Some v ->
-    containsMem initialL.(machine).(machineMem) initialMH ->
-    get initialRegsH a = Some addr ->
-    extends initialL.(machine).(core).(registers) initialRegsH ->
-    (Bind (execute (LwXLEN x a 0)) f) initialL =
-    (f tt) (with_machine
-      (with_registers
-        (setReg initialL.(machine).(core).(registers) x v) initialL.(machine))
-      initialL).
-  Proof.
-  Admitted.
-
- Lemma compile_bounds_instructions:
-    forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH initialL
-      instsBefore instsAfter logH,
-    compile_stmt s = insts ->
-    allInsts = instsBefore ++ insts ++ instsAfter ->  
-    stmt_not_too_big s ->
-    valid_registers s ->
-    divisibleBy4 imemStart ->
-    eval_stmt_log _ _ empty_map fuelH initialH EmptyMetricLog initialMH s = Some (finalH, logH, finalMH) ->
-    extends initialL.(machine).(core).(registers) initialH ->
-    containsMem initialL.(machine).(machineMem) initialMH ->
-    containsProgram initialL.(machine).(machineMem) allInsts imemStart ->
-    initialL.(machine).(core).(pc) = add imemStart (mul (ZToReg 4) (ZToReg (Zlength instsBefore))) ->
-    initialL.(machine).(core).(nextPC) = add initialL.(machine).(core).(pc) (ZToReg 4) ->
-    mem_inaccessible initialMH (regToZ_unsigned imemStart) (4 * Zlength allInsts) ->
-    runsToSatisfying_log initialL (fun finalL =>
-      finalL.(log).(instructions) < 50 * logH.(instructions)).
-  Proof.
-    intros allInsts imemStart. pose proof (mkAllInsts allInsts).
-    induction fuelH; [intros; discriminate |].
-    intros.
-    invert_eval_stmt_log.
-      try match goal with
-          | o: bopname |- _ => destruct o (* do this before destruct_containsProgram *)
-          end;
-      simpl in *; unfold compile_lit, compile_lit_rec in *;
-      destruct_everything.
-
-    - (* SLoad *)
-      clear IHfuelH.
-      eapply runsToStep_log; simpl in *; subst *.
-      + fetch_inst_log.
-        erewrite execute_load_log; [|eassumption..].
-        rewrite execState_step.
-        simpl_RiscvMachine_get_set.
-        reflexivity.
-      + run1done.
   Print Assumptions compile_stmt_correct.
 End FlatToRiscv.
