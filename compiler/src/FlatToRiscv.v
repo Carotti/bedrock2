@@ -30,6 +30,8 @@ Require Import riscv.util.ZBitOps.
 Require Import compiler.util.Common.
 Require Import riscv.Utility.
 Require Import riscv.MinimalLogging.
+Require Import Coq.ZArith.BinInt.
+Require Import Coq.ZArith.BinIntDef.
 
 (* TODO remove these three *)
 Require Import riscv.MachineWidth_XLEN.
@@ -1373,6 +1375,7 @@ Section FlatToRiscv.
       | match goal with
         | |- extends _ _ => state_calc
         end
+      | simpl; lia
       | solve [solve_containsProgram]
       | solve_word_eq
       | idtac ].
@@ -1649,16 +1652,19 @@ Section FlatToRiscv.
       load_lit_semantics v = ZToReg v.
   Proof using .
   Admitted.
-  
+
+    Print invert_eval_SLoop_log.
+    Print invert_eval_SLoop.
+
   Lemma compile_stmt_correct_aux:
     forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH (initialL : RiscvMachine)
-      instsBefore instsAfter,
+      instsBefore instsAfter initialLogH finalLogH,
     compile_stmt s = insts ->
     allInsts = instsBefore ++ insts ++ instsAfter ->  
     stmt_not_too_big s ->
     valid_registers s ->
     divisibleBy4 imemStart ->
-    eval_stmt _ _ empty_map fuelH initialH initialMH s = Some (finalH, finalMH) ->
+    eval_stmt_log _ _ empty_map fuelH initialH initialLogH initialMH s = Some (finalH, finalLogH, finalMH) ->
     extends initialL.(core).(registers) initialH ->
     containsMem initialL.(machineMem) initialMH ->
     containsProgram initialL.(machineMem) allInsts imemStart ->
@@ -1670,18 +1676,19 @@ Section FlatToRiscv.
        containsMem finalL.(machineMem) finalMH /\
        containsProgram finalL.(machineMem) allInsts imemStart /\
        finalL.(core).(pc) = add initialL.(core).(pc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
-       finalL.(core).(nextPC) = add finalL.(core).(pc) (ZToReg 4)).
+       finalL.(core).(nextPC) = add finalL.(core).(pc) (ZToReg 4) /\
+       finalL.(log).(instructions) - initialL.(log).(instructions) < (finalLogH.(instructions) - initialLogH.(instructions)) * 100).
   Proof.
     intros allInsts imemStart. pose proof (mkAllInsts allInsts).
     induction fuelH; [intros; discriminate |].
     intros.
     unfold runsToSatisfying in *.
-    invert_eval_stmt;
-      try match goal with
-          | o: bopname |- _ => destruct o (* do this before destruct_containsProgram *)
-          end;
-      simpl in *; unfold compile_lit, compile_lit_rec in *;
-      destruct_everything.
+    invert_eval_stmt_log;
+    try match goal with
+        | o: bopname |- _ => destruct o (* do this before destruct_containsProgram *)
+        end;
+    simpl in *; unfold compile_lit, compile_lit_rec in *;
+    destruct_everything.
 
     - (* SLoad *)
       clear IHfuelH.
