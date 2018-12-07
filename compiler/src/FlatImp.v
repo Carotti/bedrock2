@@ -117,35 +117,61 @@ Section FlatImp1.
             Return (put st x (eval_binop op y z), incMetricInstructions log, m)
         | SSet x y =>
             v <- get st y;
-            Return (put st x v, log, m)
+            Return (put st x v, incMetricInstructions log, m)
         | SIf cond bThen bElse =>
             vcond <- get st cond;
-            eval_stmt_log f st (incMetricJumps log) m (if reg_eqb vcond (ZToReg 0) then bElse else bThen)
+            eval_stmt_log f st (incMetricInstructions (incMetricJumps log)) m (if reg_eqb vcond (ZToReg 0) then bElse else bThen)
         | SLoop body1 cond body2 =>
             p <- eval_stmt_log f st log m body1;
             let '(st, log, m) := p in
             vcond <- get st cond;
-            if reg_eqb vcond (ZToReg 0) then Return (st, incMetricJumps log, m) else
+            if reg_eqb vcond (ZToReg 0) then Return (st, incMetricInstructions (incMetricJumps log), m) else
               q <- eval_stmt_log f st log m body2;
               let '(st, log, m) := q in
-              eval_stmt_log f st (incMetricJumps log) m (SLoop body1 cond body2)
+              eval_stmt_log f st (incMetricInstructions (incMetricJumps log)) m (SLoop body1 cond body2)
         | SSeq s1 s2 =>
             p <- eval_stmt_log f st log m s1;
             let '(st, log, m) := p in
             eval_stmt_log f st log m s2
-        | SSkip => Return (st, log, m)
+        | SSkip => Return (st, incMetricInstructions log, m)
         | SCall binds fname args =>
           fimpl <- get e fname;
           let '(params, rets, fbody) := fimpl in
           argvs <- option_all (List.map (get st) args);
           st0 <- putmany params argvs empty_map;
-          st1m' <- eval_stmt_log f st0 log m fbody;
+          st1m' <- eval_stmt_log f st0 (incMetricInstructions (incMetricJumps log)) m fbody;
           let '(st1, log, m') := st1m' in
           retvs <- option_all (List.map (get st1) rets);
           st' <- putmany binds retvs st;
           Return (st', log, m')
         end
       end.
+
+    Local Ltac unfold_succs :=
+     repeat match goal with
+     | H: Z.succ ?a = Z.succ ?b |- _ => assert (a = b) by (apply Z.succ_inj; apply H); clear H
+     end.
+
+    Local Ltac fold_log :=
+      match goal with
+       | Hs: stores ?a = stores ?b |- _ =>
+          match goal with
+          | Hl: loads a = loads b |- _ =>
+            match goal with
+            | Hj: jumps a = jumps b |- _ =>
+              match goal with
+              | Hi: instructions a = instructions b |- _ =>
+                assert (a = b) by (
+                  destruct a;
+                  destruct b;
+                  simpl in *;
+                  rewrite Hs; rewrite Hl; rewrite Hj; rewrite Hi;
+                  reflexivity);
+                subst a
+              end
+            end
+          end
+       end.
 
     Local Ltac inversion_lemma :=
       intros;
@@ -156,13 +182,21 @@ Section FlatImp1.
              | E: reg_eqb _ _ = false |- _ => apply reg_eqb_false in E
              end;
       inversionss;
-      eauto 16.
+      try (unfold_succs; fold_log);
+      eauto 17.
 
     Lemma invert_eval_SLoad: forall fuel initialSt initialM x y final,
       eval_stmt (S fuel) initialSt initialM (SLoad x y) = Some final ->
       exists a v, get initialSt y = Some a /\
                   read_mem a initialM = Some v /\
                   final = (put initialSt x v, initialM).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SLoad_log: forall fuel initialSt initialM x y final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SLoad x y) = Some final ->
+      exists a v, get initialSt y = Some a /\
+                  read_mem a initialM = Some v /\
+                  final = (put initialSt x v, incMetricInstructions (incMetricLoads log), initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SStore: forall fuel initialSt initialM x y final,
@@ -173,9 +207,22 @@ Section FlatImp1.
                          final = (initialSt, finalM).
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_SStore_log: forall fuel initialSt initialM x y final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SStore x y) = Some final ->
+      exists a v finalM, get initialSt x = Some a /\
+                         get initialSt y = Some v /\
+                         write_mem a v initialM = Some finalM /\
+                         final = (initialSt, incMetricInstructions (incMetricStores log), finalM).
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_SLit: forall fuel initialSt initialM x v final,
       eval_stmt (S fuel) initialSt initialM (SLit x v) = Some final ->
       final = (put initialSt x (ZToReg v), initialM).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SLit_log: forall fuel initialSt initialM x v final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SLit x v) = Some final ->
+      final = (put initialSt x (ZToReg v), incMetricInstructions log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SOp: forall fuel x y z op initialSt initialM final,
@@ -186,10 +233,24 @@ Section FlatImp1.
         final = (put initialSt x (eval_binop op v1 v2), initialM).
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_SOp_log: forall fuel x y z op initialSt initialM final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SOp x op y z) = Some final ->
+      exists v1 v2,
+        get initialSt y = Some v1 /\
+        get initialSt z = Some v2 /\
+        final = (put initialSt x (eval_binop op v1 v2), incMetricInstructions log, initialM).
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_SSet: forall fuel x y initialSt initialM final,
       eval_stmt (S fuel) initialSt initialM (SSet x y) = Some final ->
       exists v,
         get initialSt y = Some v /\ final = (put initialSt x v, initialM).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SSet_log: forall fuel x y initialSt initialM final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SSet x y) = Some final ->
+      exists v,
+        get initialSt y = Some v /\ final = (put initialSt x v, incMetricInstructions log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SIf: forall fuel cond bThen bElse initialSt initialM final,
@@ -198,6 +259,14 @@ Section FlatImp1.
         get initialSt cond = Some vcond /\
         (vcond <> ZToReg 0 /\ eval_stmt fuel initialSt initialM bThen = Some final \/
          vcond =  ZToReg 0 /\ eval_stmt fuel initialSt initialM bElse = Some final).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SIf_log: forall fuel cond bThen bElse initialSt initialM final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SIf cond bThen bElse) = Some final ->
+      exists vcond,
+        get initialSt cond = Some vcond /\
+        (vcond <> ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions (incMetricJumps log)) initialM bThen = Some final \/
+         vcond =  ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions (incMetricJumps log)) initialM bElse = Some final).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SLoop: forall fuel st1 m1 body1 cond body2 p4,
@@ -209,15 +278,37 @@ Section FlatImp1.
                                eval_stmt fuel st3 m3 (SLoop body1 cond body2) = Some p4.
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_SLoop_log: forall fuel st1 m1 body1 cond body2 log1 stf logf mf,
+      eval_stmt_log (S fuel) st1 log1 m1 (SLoop body1 cond body2) = Some (stf, incMetricInstructions (incMetricJumps logf), mf) ->
+      eval_stmt_log fuel st1 log1 m1 body1 = Some (stf, logf, mf)
+        /\ get stf cond = Some (ZToReg 0) \/
+      exists st2 m2 st3 m3 cv log2 log3,
+         eval_stmt_log fuel st1 log1 m1 body1 = Some (st2, log2, m2) /\
+         get st2 cond = Some cv /\ cv <> ZToReg 0 /\
+         eval_stmt_log fuel st2 log2 m2 body2 = Some (st3, log3, m3) /\
+         eval_stmt_log fuel st3 (incMetricInstructions (incMetricJumps log3)) m3 (SLoop body1 cond body2) = Some (stf, incMetricInstructions (incMetricJumps logf), mf).
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_SSeq: forall fuel initialSt initialM s1 s2 final,
       eval_stmt (S fuel) initialSt initialM (SSeq s1 s2) = Some final ->
       exists midSt midM, eval_stmt fuel initialSt initialM s1 = Some (midSt, midM) /\
                          eval_stmt fuel midSt midM s2 = Some final.
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_SSeq_log: forall fuel initialSt initialM s1 s2 final log,
+      eval_stmt_log (S fuel) initialSt log initialM (SSeq s1 s2) = Some final ->
+      exists midSt midM midLog, eval_stmt_log fuel initialSt log initialM s1 = Some (midSt, midLog, midM) /\
+                         eval_stmt_log fuel midSt midLog midM s2 = Some final.
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_SSkip: forall fuel initialSt initialM final,
       eval_stmt (S fuel) initialSt initialM SSkip = Some final ->
       final = (initialSt, initialM).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SSkip_log: forall fuel initialSt initialM final log,
+      eval_stmt_log (S fuel) initialSt log initialM SSkip = Some final ->
+      final = (initialSt, incMetricInstructions log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SCall : forall st m1 p2 f binds fname args,
@@ -231,6 +322,19 @@ Section FlatImp1.
         putmany binds retvs st = Some st' /\
         p2 = (st', m').
     Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_SCall_log : forall st m1 st2 m2 logf f binds fname args log,
+      eval_stmt_log (S f) st log m1 (SCall binds fname args) = Some (st2, logf, m2) ->
+      exists params rets fbody argvs st0 st1 m' retvs st' log',
+        get e fname = Some (params, rets, fbody) /\
+        option_all (List.map (get st) args) = Some argvs /\
+        putmany params argvs empty_map = Some st0 /\
+        eval_stmt_log f st0 (incMetricInstructions (incMetricJumps log)) m1 fbody = Some (st1, log', m') /\
+        option_all (List.map (get st1) rets) = Some retvs /\
+        putmany binds retvs st = Some st' /\
+        (st2, logf, m2) = (st', log', m').
+    Proof. inversion_lemma. Qed.
+
   End WithEnv.
 
   Definition stmt_size_body(rec: stmt -> nat)(s: stmt): nat :=
@@ -308,6 +412,35 @@ Ltac invert_eval_stmt :=
     | apply invert_eval_SSeq in E
     | apply invert_eval_SSkip in E
     | apply invert_eval_SCall in E ];
+    deep_destruct E;
+    [ let x := fresh "Case_SLoad" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SStore" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SLit" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SOp" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SSet" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SIf_Then" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SIf_Else" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SLoop_Done" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SLoop_NotDone" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SSeq" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SSkip" in pose proof tt as x; move x at top
+    | let x := fresh "Case_SCall" in pose proof tt as x; move x at top ]
+  end.
+
+Ltac invert_eval_stmt_log :=
+  lazymatch goal with
+  | E: eval_stmt_log _ _ _ (S ?fuel) _ _ ?s = Some _ |- _ =>
+    destruct s;
+    [ apply invert_eval_SLoad_log in E
+    | apply invert_eval_SStore_log in E
+    | apply invert_eval_SLit_log in E
+    | apply invert_eval_SOp_log in E
+    | apply invert_eval_SSet_log in E
+    | apply invert_eval_SIf_log in E
+    | apply invert_eval_SLoop_log in E
+    | apply invert_eval_SSeq_log in E
+    | apply invert_eval_SSkip_log in E
+    | apply invert_eval_SCall_log in E ];
     deep_destruct E;
     [ let x := fresh "Case_SLoad" in pose proof tt as x; move x at top
     | let x := fresh "Case_SStore" in pose proof tt as x; move x at top
