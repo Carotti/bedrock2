@@ -15,13 +15,10 @@ Section FlatImp1.
   Context {MW: MachineWidth mword}.
 
   Variable var: Set.
-  Context {var_eq_dec: DecidableEq var}.
   Variable func: Set.
-  Context {func_eq_dec: DecidableEq func}.
 
   Context {stateMap: MapFunctions var mword}.
   Notation state := (map var mword).
-  Context {varset: SetFunctions var}.
   Notation vars := (set var).
 
   Ltac state_calc := state_calc_generic var mword.
@@ -147,32 +144,6 @@ Section FlatImp1.
         end
       end.
 
-    Local Ltac unfold_succs :=
-     repeat match goal with
-     | H: Z.succ ?a = Z.succ ?b |- _ => assert (a = b) by (apply Z.succ_inj; apply H); clear H
-     end.
-
-    Local Ltac fold_log :=
-      match goal with
-       | Hs: stores ?a = stores ?b |- _ =>
-          match goal with
-          | Hl: loads a = loads b |- _ =>
-            match goal with
-            | Hj: jumps a = jumps b |- _ =>
-              match goal with
-              | Hi: instructions a = instructions b |- _ =>
-                assert (a = b) by (
-                  destruct a;
-                  destruct b;
-                  simpl in *;
-                  rewrite Hs; rewrite Hl; rewrite Hj; rewrite Hi;
-                  reflexivity);
-                subst a
-              end
-            end
-          end
-       end.
-
     Local Ltac inversion_lemma :=
       intros;
       simpl in *;
@@ -182,7 +153,7 @@ Section FlatImp1.
              | E: reg_eqb _ _ = false |- _ => apply reg_eqb_false in E
              end;
       inversionss;
-      try (unfold_succs; fold_log);
+      try (unfold_log_inc_dec; fold_log);
       eauto 17.
 
     Lemma invert_eval_SLoad: forall fuel initialSt initialM x y final,
@@ -279,14 +250,14 @@ Section FlatImp1.
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SLoop_log: forall fuel st1 m1 body1 cond body2 log1 stf logf mf,
-      eval_stmt_log (S fuel) st1 log1 m1 (SLoop body1 cond body2) = Some (stf, incMetricInstructions (incMetricJumps logf), mf) ->
-      eval_stmt_log fuel st1 log1 m1 body1 = Some (stf, logf, mf)
+      eval_stmt_log (S fuel) st1 log1 m1 (SLoop body1 cond body2) = Some (stf, logf, mf) ->
+      eval_stmt_log fuel st1 log1 m1 body1 = Some (stf, decMetricInstructions (decMetricJumps logf), mf)
         /\ get stf cond = Some (ZToReg 0) \/
       exists st2 m2 st3 m3 cv log2 log3,
          eval_stmt_log fuel st1 log1 m1 body1 = Some (st2, log2, m2) /\
          get st2 cond = Some cv /\ cv <> ZToReg 0 /\
          eval_stmt_log fuel st2 log2 m2 body2 = Some (st3, log3, m3) /\
-         eval_stmt_log fuel st3 (incMetricInstructions (incMetricJumps log3)) m3 (SLoop body1 cond body2) = Some (stf, incMetricInstructions (incMetricJumps logf), mf).
+         eval_stmt_log fuel st3 (incMetricInstructions (incMetricJumps log3)) m3 (SLoop body1 cond body2) = Some (stf, logf, mf).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SSeq: forall fuel initialSt initialM s1 s2 final,
@@ -350,7 +321,10 @@ Section FlatImp1.
     | SSkip => 1
     | SCall binds f args => S (length binds + length args)
     end.
-  
+
+  Context {varset: SetFunctions var}.
+  Context {func_eq_dec: DecidableEq func}.
+
   Fixpoint stmt_size(s: stmt): nat := stmt_size_body stmt_size s.
   (* TODO: in coq 8.9 it will be possible to state this lemma automatically: https://github.com/coq/coq/blob/91e8dfcd7192065f21273d02374dce299241616f/CHANGES#L16 *)
   Lemma stmt_size_unfold : forall s, stmt_size s = stmt_size_body stmt_size s. destruct s; reflexivity. Qed.
@@ -429,7 +403,7 @@ Ltac invert_eval_stmt :=
 
 Ltac invert_eval_stmt_log :=
   lazymatch goal with
-  | E: eval_stmt_log _ _ _ (S ?fuel) _ _ ?s = Some _ |- _ =>
+  | E: eval_stmt_log _ _ _ (S ?fuel) _ _ _ ?s = Some _ |- _ =>
     destruct s;
     [ apply invert_eval_SLoad_log in E
     | apply invert_eval_SStore_log in E
