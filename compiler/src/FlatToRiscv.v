@@ -102,7 +102,6 @@ Section FlatToRiscv.
     | _ => fail 1 "wrong shape of goal"
     end;
     subst;
-    clear;
     simpl;
     repeat (autorewrite with rew_Zlength; simpl);
     try ring.    
@@ -245,15 +244,15 @@ Section FlatToRiscv.
   Local Notation RiscvMachineNoLog := (@RiscvMachine mword mem state).
   Local Notation RiscvMachine := (@RiscvMachineLog mword mem state MetricLog).
 
-  Context {RVM: RiscvProgram (OState RiscvMachine) mword}.
+  Context {RVM: RiscvProgram (OState (@RiscvMachineLog mword mem state MetricLog)) mword}.
 
   (* assumes generic translate and raiseException functions *)
-  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.  
-  
-  Context {RVAX: @AxiomaticRiscvL mword _ state State_is_RegisterFile mem _ RVM}.
+  Context {RVS: @RiscvState (OState RiscvMachine) mword _ _ RVM}.
 
-  Ltac state_calc := state_calc_generic Z mword.
+  Context {RVAX: @AxiomaticRiscvL mword _ state State_is_RegisterFile mem _ RVM}.
   
+  Ltac state_calc := state_calc_generic Z mword.
+
   (* This phase assumes that register allocation has already been done on the FlatImp
      level, and expects the following to hold: *)
   Fixpoint valid_registers(s: stmt): Prop :=
@@ -966,6 +965,10 @@ Section FlatToRiscv.
     end.
 *)
 
+  Lemma simpl_with_log: forall (Log : Type) (logNew logOld : Log) (m : RiscvMachineNoLog),
+    with_log logNew (mkRiscvMachineLog Log m logOld) = mkRiscvMachineLog Log m logNew.
+  Proof. intros. reflexivity. Qed.
+
   Lemma simpl_with_registers: forall (rs1 rs2: state) p npc eh (m: mem),
     with_registers (mword := mword) rs2 (mkRiscvMachine (mkRiscvMachineCore rs1 p npc eh) m) =
                                         (mkRiscvMachine (mkRiscvMachineCore rs2 p npc eh) m).
@@ -984,7 +987,7 @@ Section FlatToRiscv.
   Lemma simpl_with_machineMem: forall (c: @RiscvMachineCore _ state) (m1 m2: mem),
     with_machineMem (mword := mword) m2 (mkRiscvMachine c m1) =
                                         (mkRiscvMachine c m2).
-  Proof. intros. reflexivity. Qed.
+  Proof. intros. reflexivity. Qed.  
 
   Lemma simpl_with_registers_log: forall r1 (m : RiscvMachineNoLog) (Log : Type) (l : Log),
     with_registers_log r1 (mkRiscvMachineLog Log m l) = mkRiscvMachineLog Log (with_registers r1 m) l.
@@ -1027,14 +1030,15 @@ Section FlatToRiscv.
   Proof. intros. reflexivity. Qed.  
 
   Hint Rewrite
-      simpl_with_registers
-      simpl_with_pc
-      simpl_with_nextPC
-      simpl_with_machineMem
+      simpl_with_log
       simpl_with_registers_log
       simpl_with_pc_log
       simpl_with_nextPC_log
       simpl_with_machineMem_log
+      simpl_with_registers
+      simpl_with_pc
+      simpl_with_nextPC
+      simpl_with_machineMem
       simpl_registers
       simpl_pc
       simpl_nextPC
@@ -1058,7 +1062,7 @@ Section FlatToRiscv.
     simpl_RiscvMachine_get_set.
 
   Arguments Z.modulo : simpl never.
-  
+
   Lemma run1_simpl: forall {inst initialL pc0},
       containsProgram initialL.(machine).(machineMem) [[inst]] pc0 ->
       pc0 = initialL.(core).(pc) ->
@@ -1079,7 +1083,7 @@ Section FlatToRiscv.
            | |- context[?x] => progress (ring_simplify x)
            end.
     reflexivity.
-  Admitted. 
+  Qed.
 
   Hint Rewrite
       (@associativity  _ (OState_Monad RiscvMachine))
@@ -1235,8 +1239,8 @@ Section FlatToRiscv.
   Proof. intros. tauto. Qed.
 
   Lemma eval_stmt_preserves_mem_accessibility:  forall {fuel: nat} {initialMem finalMem: Memory.mem}
-      {s: stmt} {initialRegs finalRegs: state},
-      eval_stmt _ _ empty_map fuel initialRegs initialMem s = Some (finalRegs, finalMem) ->
+      {s: stmt} {initialRegs finalRegs: state} initialLog finalLog,
+      eval_stmt_log _ _ empty_map fuel initialRegs initialLog initialMem s = Some (finalRegs, finalLog, finalMem) ->
       forall a, Memory.read_mem a initialMem = None <-> Memory.read_mem a finalMem = None.
   Proof.
     induction fuel; intros; try (simpl in *; discriminate).
@@ -1253,21 +1257,21 @@ Section FlatToRiscv.
         eapply mem_accessibility_trans; [ eauto | ].
         eauto.
     - destruct p.
-      eapply mem_accessibility_trans; eauto.
+      eapply mem_accessibility_trans; eauto; admit.
     - rewrite empty_is_empty in E. discriminate E.
-  Qed.
+  Admitted.
 
   Lemma eval_stmt_preserves_mem_inaccessible: forall {fuel: nat} {initialMem finalMem: Memory.mem}
-      {s: stmt} {initialRegs finalRegs: state},
-      eval_stmt _ _ empty_map fuel initialRegs initialMem s = Some (finalRegs, finalMem) ->
+      {s: stmt} {initialRegs finalRegs: state} initialLog finalLog,
+      eval_stmt_log _ _ empty_map fuel initialRegs initialLog initialMem s = Some (finalRegs, finalLog, finalMem) ->
       forall start len,
         mem_inaccessible initialMem start len -> mem_inaccessible finalMem start len.
   Proof.
     unfold mem_inaccessible. intros.
     destruct (Memory.read_mem a initialMem) eqn: E.
     - eapply H0. exact E.
-    - pose proof (eval_stmt_preserves_mem_accessibility H a) as P.
-      destruct P as [P _]. specialize (P E). exfalso. congruence.    
+    - pose proof (eval_stmt_preserves_mem_accessibility initialLog H a) as P.
+      destruct P as [P _]. specialize (P E). exfalso. congruence.
   Qed.
 
   Ltac prove_remu_four_zero :=
@@ -1291,10 +1295,10 @@ Section FlatToRiscv.
     try eassumption;
     let Eq := fresh "Eq" in
     match goal with
-    | E1: eval_stmt _ _ ?env ?f ?r1 ?m1 ?s1 = Some (?r2, ?m2),
-      E2: eval_stmt _ _ ?env ?f ?r2 ?m2 ?s2 = Some (?r3, ?m3)
-      |-   eval_stmt _ _ ?env _ _ ?m1 _ = Some (_, ?m3)
-      => assert (eval_stmt _ _ env (S f) r1 m1 (SSeq s1 s2) = Some (r3, m3)) as Eq
+    | E1: eval_stmt_log _ _ ?env ?f ?r1 ?l1 ?m1 ?s1 = Some (?r2, ?l2, ?m2),
+      E2: eval_stmt_log _ _ ?env ?f ?r2 ?l2 ?m2 ?s2 = Some (?r3, ?l3, ?m3)
+      |-   eval_stmt_log _ _ ?env _ _ _ ?m1 _ = Some (_, _, ?m3)
+      => assert (eval_stmt_log _ _ env (S f) r1 l1 m1 (SSeq s1 s2) = Some (r3, l3, m3)) as Eq
           by (simpl; rewrite E1; exact E2); exact Eq
     end.
 
@@ -1369,13 +1373,14 @@ Section FlatToRiscv.
     repeat match goal with
            | |- _ /\ _ => split
            end;
+    simpl;
     first
       [ assumption
       | eapply containsMem_write; eassumption
       | match goal with
         | |- extends _ _ => state_calc
         end
-      | simpl; lia
+      | lia
       | solve [solve_containsProgram]
       | solve_word_eq
       | idtac ].
@@ -1383,7 +1388,6 @@ Section FlatToRiscv.
   Ltac IH_done IH :=
     eapply runsToSatisfying_imp; [ exact IH | ];
     subst;
-    clear;
     simpl;
     intros;
     destruct_products;
@@ -1394,7 +1398,8 @@ Section FlatToRiscv.
     try match goal with
         | H: ?m.(core).(pc) = _ |- ?m.(core).(pc) = _ => rewrite H
         end;
-    solve_word_eq.
+    simpl in *;
+    [solve_word_eq | lia].
 
   Ltac destruct_everything :=
     destruct_products;
@@ -1653,9 +1658,6 @@ Section FlatToRiscv.
   Proof using .
   Admitted.
 
-    Print invert_eval_SLoop_log.
-    Print invert_eval_SLoop.
-
   Lemma compile_stmt_correct_aux:
     forall allInsts imemStart fuelH s insts initialH  initialMH finalH finalMH (initialL : RiscvMachine)
       instsBefore instsAfter initialLogH finalLogH,
@@ -1677,7 +1679,7 @@ Section FlatToRiscv.
        containsProgram finalL.(machineMem) allInsts imemStart /\
        finalL.(core).(pc) = add initialL.(core).(pc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
        finalL.(core).(nextPC) = add finalL.(core).(pc) (ZToReg 4) /\
-       finalL.(log).(instructions) - initialL.(log).(instructions) < (finalLogH.(instructions) - initialLogH.(instructions)) * 100).
+       finalL.(log).(instructions) - initialL.(log).(instructions) < (finalLogH.(instructions) - initialLogH.(instructions)) * 16).
   Proof.
     intros allInsts imemStart. pose proof (mkAllInsts allInsts).
     induction fuelH; [intros; discriminate |].
@@ -1804,7 +1806,7 @@ Section FlatToRiscv.
       intros.
       destruct_everything.
       run1step.
-      (* 2nd application of IH: part 2 of loop body *)      
+      (* 2nd application of IH: part 2 of loop body *)
       spec_IH IHfuelH IH s2.
       apply (runsToSatisfying_trans IH). clear IH.
       intros.
@@ -1813,7 +1815,7 @@ Section FlatToRiscv.
       (* 3rd application of IH: run the whole loop again *)
       spec_IH IHfuelH IH (SLoop s1 cond s2).
       IH_done IH.
-      
+
     - (* SSeq *)
       spec_IH IHfuelH IH s1.
       apply (runsToSatisfying_trans IH). clear IH.
