@@ -1256,10 +1256,10 @@ Section FlatToRiscv.
       + eapply mem_accessibility_trans; [ eauto | ].
         eapply mem_accessibility_trans; [ eauto | ].
         eauto.
-    - destruct p.
-      eapply mem_accessibility_trans; eauto; admit.
+    - repeat destruct p.
+      eapply mem_accessibility_trans; eauto.
     - rewrite empty_is_empty in E. discriminate E.
-  Admitted.
+  Qed.
 
   Lemma eval_stmt_preserves_mem_inaccessible: forall {fuel: nat} {initialMem finalMem: Memory.mem}
       {s: stmt} {initialRegs finalRegs: state} initialLog finalLog,
