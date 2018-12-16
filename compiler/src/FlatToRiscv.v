@@ -1679,7 +1679,7 @@ Section FlatToRiscv.
        containsProgram finalL.(machineMem) allInsts imemStart /\
        finalL.(core).(pc) = add initialL.(core).(pc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
        finalL.(core).(nextPC) = add finalL.(core).(pc) (ZToReg 4) /\
-       finalL.(log).(instructions) - initialL.(log).(instructions) < (finalLogH.(instructions) - initialLogH.(instructions)) * 16).
+       finalL.(log).(instructions) - initialL.(log).(instructions) <= (finalLogH.(instructions) - initialLogH.(instructions)) * 1).
   Proof.
     intros allInsts imemStart. pose proof (mkAllInsts allInsts).
     induction fuelH; [intros; discriminate |].

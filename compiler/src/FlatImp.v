@@ -93,6 +93,12 @@ Section FlatImp1.
         end
       end.
 
+    Definition incMetricInstructions_n (n : Z) (l : MetricLog)  : MetricLog :=
+      mkMetricLog ((instructions l) + n) (stores l) (loads l) (jumps l).
+
+    Definition decMetricInstructions_n (n : Z) (l : MetricLog)  : MetricLog :=
+      mkMetricLog ((instructions l) - n) (stores l) (loads l) (jumps l).
+
     Fixpoint eval_stmt_log(f: nat)(st: state)(log: MetricLog)(m: mem)(s: stmt): option (state * MetricLog * mem) :=
       match f with
       | 0 => None (* out of fuel *)
@@ -107,17 +113,17 @@ Section FlatImp1.
             m <- write_mem a v m;
             Return (st, incMetricInstructions (incMetricStores log), m)
         | SLit x v =>
-            Return (put st x (ZToReg v), incMetricInstructions log, m)
+            Return (put st x (ZToReg v), incMetricInstructions_n 15 log, m)
         | SOp x op y z =>
             y <- get st y;
             z <- get st z;
-            Return (put st x (eval_binop op y z), incMetricInstructions log, m)
+            Return (put st x (eval_binop op y z), incMetricInstructions_n 3 log, m)
         | SSet x y =>
             v <- get st y;
             Return (put st x v, incMetricInstructions log, m)
         | SIf cond bThen bElse =>
             vcond <- get st cond;
-            eval_stmt_log f st (incMetricInstructions (incMetricJumps log)) m (if reg_eqb vcond (ZToReg 0) then bElse else bThen)
+            eval_stmt_log f st (incMetricInstructions_n 2 (incMetricJumps log)) m (if reg_eqb vcond (ZToReg 0) then bElse else bThen)
         | SLoop body1 cond body2 =>
             p <- eval_stmt_log f st log m body1;
             let '(st, log, m) := p in
@@ -125,7 +131,7 @@ Section FlatImp1.
             if reg_eqb vcond (ZToReg 0) then Return (st, incMetricInstructions (incMetricJumps log), m) else
               q <- eval_stmt_log f st log m body2;
               let '(st, log, m) := q in
-              eval_stmt_log f st (incMetricInstructions (incMetricJumps log)) m (SLoop body1 cond body2)
+              eval_stmt_log f st (incMetricInstructions_n 2 (incMetricJumps log)) m (SLoop body1 cond body2)
         | SSeq s1 s2 =>
             p <- eval_stmt_log f st log m s1;
             let '(st, log, m) := p in
@@ -193,7 +199,7 @@ Section FlatImp1.
 
     Lemma invert_eval_SLit_log: forall fuel initialSt initialM x v final log,
       eval_stmt_log (S fuel) initialSt log initialM (SLit x v) = Some final ->
-      final = (put initialSt x (ZToReg v), incMetricInstructions log, initialM).
+      final = (put initialSt x (ZToReg v), incMetricInstructions_n 15 log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SOp: forall fuel x y z op initialSt initialM final,
@@ -209,7 +215,7 @@ Section FlatImp1.
       exists v1 v2,
         get initialSt y = Some v1 /\
         get initialSt z = Some v2 /\
-        final = (put initialSt x (eval_binop op v1 v2), incMetricInstructions log, initialM).
+        final = (put initialSt x (eval_binop op v1 v2), incMetricInstructions_n 3 log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SSet: forall fuel x y initialSt initialM final,
@@ -236,8 +242,8 @@ Section FlatImp1.
       eval_stmt_log (S fuel) initialSt log initialM (SIf cond bThen bElse) = Some final ->
       exists vcond,
         get initialSt cond = Some vcond /\
-        (vcond <> ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions (incMetricJumps log)) initialM bThen = Some final \/
-         vcond =  ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions (incMetricJumps log)) initialM bElse = Some final).
+        (vcond <> ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions_n 2 (incMetricJumps log)) initialM bThen = Some final \/
+         vcond =  ZToReg 0 /\ eval_stmt_log fuel initialSt (incMetricInstructions_n 2 (incMetricJumps log)) initialM bElse = Some final).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SLoop: forall fuel st1 m1 body1 cond body2 p4,
@@ -257,7 +263,7 @@ Section FlatImp1.
          eval_stmt_log fuel st1 log1 m1 body1 = Some (st2, log2, m2) /\
          get st2 cond = Some cv /\ cv <> ZToReg 0 /\
          eval_stmt_log fuel st2 log2 m2 body2 = Some (st3, log3, m3) /\
-         eval_stmt_log fuel st3 (incMetricInstructions (incMetricJumps log3)) m3 (SLoop body1 cond body2) = Some (stf, logf, mf).
+         eval_stmt_log fuel st3 (incMetricInstructions_n 2 (incMetricJumps log3)) m3 (SLoop body1 cond body2) = Some (stf, logf, mf).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SSeq: forall fuel initialSt initialM s1 s2 final,
