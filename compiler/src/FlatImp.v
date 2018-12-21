@@ -1,4 +1,5 @@
 Require Import lib.LibTacticsMin.
+Require Import riscv.util.Monads.
 Require Import riscv.util.BitWidths.
 Require Import riscv.Utility.
 Require Import riscv.MinimalLogging.

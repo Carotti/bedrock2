@@ -13,7 +13,14 @@ Require Import compiler.Op.
 Require Import compiler.StateCalculus.
 Require Import compiler.Decidable.
 Require Import compiler.Memory.
+Require Import riscv.MinimalLogging.
 
+Local Notation "' x <- a ; f" :=
+  (match (a: option _) with
+   | x => f
+   | _ => None
+   end)
+  (right associativity, at level 70, x pattern).
 
 Section ExprImp1.
 
@@ -37,13 +44,27 @@ Section ExprImp1.
 
   Fixpoint eval_expr(st: state)(e: expr): option mword :=
     match e with
-    | expr.literal v => Return (ZToReg v)
+    | expr.literal v => Some (ZToReg v)
     | expr.var x => get st x
     | expr.load x a => None (* TODO *)
     | expr.op op e1 e2 =>
-        v1 <- eval_expr st e1;
-        v2 <- eval_expr st e2;
-        Return (interp_binop op v1 v2)
+        'Some v1 <- eval_expr st e1;
+        'Some v2 <- eval_expr st e2;
+        Some (interp_binop op v1 v2)
+    end.
+
+  Fixpoint eval_expr_log(st: state)(l: MetricLog)(e: expr): option (MetricLog * mword) :=
+    match e with
+    | expr.literal v => Some (incMetricInstructions l, ZToReg v)
+    | expr.var x => match get st x with
+                    | None => None
+                    | Some z => Some (incMetricInstructions l, z)
+                    end
+    | expr.load x a => None (* TODO *)
+    | expr.op op e1 e2 =>
+        'Some v1 <- eval_expr_log st l e1;
+        'Some v2 <- eval_expr_log st (fst v1) e2;
+        Some (incMetricInstructions (fst v2), interp_binop op (snd v1) (snd v2))
     end.
 
   Section WithEnv.
@@ -51,7 +72,46 @@ Section ExprImp1.
     Notation env := (map func (list var * list var * cmd)).
     Context (e: env).
 
-    Fixpoint eval_cmd(f: nat)(st: state)(m: mem)(s: cmd): option (state * mem) :=
+   
+    Fixpoint eval_cmd(f: nat)(st: state)(m: @mem mword)(s: cmd): option (state * (@mem mword)) :=
+      match f with
+      | 0 => None (* out of fuel *)
+      | S f => match s with
+        | cmd.store number_of_bytes_IGNORED_TODO a v =>
+            'Some a <- eval_expr st a;
+            'Some v <- eval_expr st v;
+            'Some m <- write_mem a v m;
+            Some (st, m)
+        | cmd.set x e =>
+            'Some v <- eval_expr st e;
+            Some (put st x v, m)
+        (*| cmd.unset x =>
+            Some (remove_key st x, m)*)
+        | cmd.cond cond bThen bElse =>
+            'Some v <- eval_expr st cond;
+            eval_cmd f st m (if reg_eqb v (ZToReg 0) then bElse else bThen)
+        | cmd.while cond body =>
+            'Some v <- eval_expr st cond;
+            if reg_eqb v (ZToReg 0) then Some (st, m) else
+              'Some (st, m) <- eval_cmd f st m body;
+              eval_cmd f st m (cmd.while cond body)
+        | cmd.seq s1 s2 =>
+            'Some (st, m) <- eval_cmd f st m s1;
+            eval_cmd f st m s2
+        | cmd.skip => Some (st, m)
+        | cmd.call binds fname args =>
+          'Some (params, rets, fbody) <- get e fname;
+          'Some argvs <- option_all (List.map (eval_expr st) args);
+          'Some st0 <- putmany params argvs empty_map;
+          'Some (st1, m') <- eval_cmd f st0 m fbody;
+          'Some retvs <- option_all (List.map (get st1) rets);
+          'Some st' <- putmany binds retvs st;
+          Some (st', m')
+        | cmd.interact _ _ _ => None (* unsupported *)
+        end
+      end.
+
+    Fixpoint eval_cmd_log(f: nat)(st: state)(log: MetricLog)(m: mem)(s: cmd): option (state * MetricLog * mem) :=
       match f with
       | 0 => None (* out of fuel *)
       | S f => match s with
@@ -59,40 +119,40 @@ Section ExprImp1.
         | SLoad x a =>
             a <- eval_expr st a;
             v <- read_mem a m;
-            Return (put st x v, m)
+            Return (put st x v, log, m)
         *)
         | cmd.store number_of_bytes_IGNORED_TODO a v =>
-            a <- eval_expr st a;
-            v <- eval_expr st v;
-            m <- write_mem a v m;
-            Return (st, m)
+            a <- eval_expr_log st log a;
+            v <- eval_expr_log st log v;
+            m <- write_mem (snd a) (snd v) m;
+            Return (st, log, m)
         | cmd.set x e =>
-            v <- eval_expr st e;
-            Return (put st x v, m)
+            v <- eval_expr_log st log e;
+            Return (put st x (snd v), log, m)
         | cmd.cond cond bThen bElse =>
-            v <- eval_expr st cond;
-            eval_cmd f st m (if reg_eqb v (ZToReg 0) then bElse else bThen)
+            v <- eval_expr_log st log cond;
+            eval_cmd_log f st log m (if reg_eqb (snd v) (ZToReg 0) then bElse else bThen)
         | cmd.while cond body =>
-            v <- eval_expr st cond;
-            if reg_eqb v (ZToReg 0) then Return (st, m) else
-              p <- eval_cmd f st m body;
-              let '(st, m) := p in
-              eval_cmd f st m (cmd.while cond body)
+            v <- eval_expr_log st log cond;
+            if reg_eqb (snd v) (ZToReg 0) then Return (st, m) else
+              p <- eval_cmd_log f st log m body;
+              let '(st, log, m) := p in
+              eval_cmd_log f st log m (cmd.while cond body)
         | cmd.seq s1 s2 =>
-            p <- eval_cmd f st m s1;
-            let '(st, m) := p in
-            eval_cmd f st m s2
-        | cmd.skip => Return (st, m)
+            p <- eval_cmd_log f st log m s1;
+            let '(st, log, m) := p in
+            eval_cmd_log f st log m s2
+        | cmd.skip => Return (st, log, m)
         | cmd.call binds fname args =>
           fimpl <- get e fname;
           let '(params, rets, fbody) := fimpl in
           argvs <- option_all (List.map (eval_expr st) args);
           st0 <- putmany params argvs empty_map;
-          st1m' <- eval_cmd f st0 m fbody;
-          let '(st1, m') := st1m' in
+          st1m' <- eval_cmd_log f st0 log m fbody;
+          let '(st1, log, m') := st1m' in
           retvs <- option_all (List.map (get st1) rets);
           st' <- putmany binds retvs st;
-          Return (st', m')
+          Return (st', log, m')
         | cmd.interact _ _ _ => None (* unsupported *)
         end
       end.
