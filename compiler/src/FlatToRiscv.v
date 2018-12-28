@@ -1832,34 +1832,39 @@ Section FlatToRiscv.
   Qed.
 
   Lemma compile_stmt_correct:
-    forall imemStart fuelH s insts initialMH finalH finalMH (initialL : RiscvMachine),
+    forall imemStart fuelH s insts initialMH finalH finalMH (initialL : RiscvMachine) finalLogH,
     compile_stmt s = insts ->
     stmt_not_too_big s ->
     valid_registers s ->
     divisibleBy4 imemStart ->
-    eval_stmt _ _ empty_map fuelH empty_map initialMH s = Some (finalH, finalMH) ->
+    eval_stmt_log _ _ empty_map fuelH empty_map EmptyMetricLog initialMH s = Some (finalH, finalLogH, finalMH) ->
     containsMem initialL.(machineMem) initialMH ->
     containsProgram initialL.(machineMem) insts imemStart ->
     initialL.(core).(pc) = imemStart ->
     initialL.(core).(nextPC) = add initialL.(core).(pc) (ZToReg 4) ->
+    initialL.(log) = EmptyMetricLog ->
     mem_inaccessible initialMH (regToZ_unsigned imemStart) (4 * Zlength insts) ->
     exists fuelL,
       let finalL := execState (run (B := BitWidth) fuelL) initialL in
       extends finalL.(core).(registers) finalH /\
-      containsMem finalL.(machineMem) finalMH.
+      containsMem finalL.(machineMem) finalMH /\
+      finalL.(log).(instructions) <= finalLogH.(instructions).
   Proof.
     intros.
     pose proof runsTo_to_onerun as Q.
     specialize (Q initialL
                   (fun finalL => extends (registers (core finalL)) finalH /\
-                                 containsMem (machineMem finalL) finalMH)).
+                                 containsMem (machineMem finalL) finalMH /\
+                                 finalL.(log).(instructions) <= finalLogH.(instructions))).
     cbv beta zeta in *.
     unfold runsTo_onerun in Q.
     destruct Q as [fuel Q].
     {
     eapply runsToSatisfying_imp.
     - eapply @compile_stmt_correct_aux with (s := s) (initialH := empty_map)
-        (fuelH := fuelH) (finalH := finalH) (instsBefore := nil) (instsAfter := nil).
+                                            (fuelH := fuelH) (finalH := finalH)
+                                            (instsBefore := nil) (instsAfter := nil)
+                                            (initialLogH := EmptyMetricLog).
       + reflexivity.
       + reflexivity.
       + assumption.
@@ -1875,8 +1880,11 @@ Section FlatToRiscv.
       + assumption.
       + rewrite app_nil_r. rewrite app_nil_l. subst *. assumption.
     - intros.
-      rename H9 into A.
-      cbv beta in A. tauto.
+      rename H10 into A.
+      cbv beta in A.
+      replace (log initialL) with EmptyMetricLog in * by reflexivity.
+      simpl in A. repeat rewrite Z.sub_0_r in A. rewrite Z.mul_1_r in A.
+      tauto.
     }
     {
       match type of Q with
