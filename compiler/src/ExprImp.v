@@ -71,7 +71,6 @@ Section ExprImp1.
     Context {funcMap: MapFunctions func (list var * list var * cmd)}.
     Notation env := (map func (list var * list var * cmd)).
     Context (e: env).
-
    
     Fixpoint eval_cmd(f: nat)(st: state)(m: @mem mword)(s: cmd): option (state * (@mem mword)) :=
       match f with
@@ -111,48 +110,40 @@ Section ExprImp1.
         end
       end.
 
-    Fixpoint eval_cmd_log(f: nat)(st: state)(log: MetricLog)(m: mem)(s: cmd): option (state * MetricLog * mem) :=
+    Fixpoint eval_cmd_log(f: nat)(st: state)(l: MetricLog)(m: @mem mword)(s: cmd): option (state *  MetricLog * (@mem mword)) :=
       match f with
       | 0 => None (* out of fuel *)
       | S f => match s with
-        (* TODO
-        | SLoad x a =>
-            a <- eval_expr st a;
-            v <- read_mem a m;
-            Return (put st x v, log, m)
-        *)
         | cmd.store number_of_bytes_IGNORED_TODO a v =>
-            a <- eval_expr_log st log a;
-            v <- eval_expr_log st log v;
-            m <- write_mem (snd a) (snd v) m;
-            Return (st, log, m)
+            'Some (l, a) <- eval_expr_log st l a;
+            'Some (l, v) <- eval_expr_log st l v;
+            'Some m <- write_mem a v m;
+            Some (st, l, m)
         | cmd.set x e =>
-            v <- eval_expr_log st log e;
-            Return (put st x (snd v), log, m)
+            'Some (l, v) <- eval_expr_log st l e;
+            Some (put st x v, l, m)
+        (*| cmd.unset x =>
+            Some (remove_key st x, m)*)
         | cmd.cond cond bThen bElse =>
-            v <- eval_expr_log st log cond;
-            eval_cmd_log f st log m (if reg_eqb (snd v) (ZToReg 0) then bElse else bThen)
+            'Some (l, v) <- eval_expr_log st l cond;
+            eval_cmd_log f st l m (if reg_eqb v (ZToReg 0) then bElse else bThen)
         | cmd.while cond body =>
-            v <- eval_expr_log st log cond;
-            if reg_eqb (snd v) (ZToReg 0) then Return (st, m) else
-              p <- eval_cmd_log f st log m body;
-              let '(st, log, m) := p in
-              eval_cmd_log f st log m (cmd.while cond body)
+            'Some (l, v) <- eval_expr_log st l cond;
+            if reg_eqb v (ZToReg 0) then Some (st, l, m) else
+              'Some (st, m) <- eval_cmd f st m body;
+              eval_cmd_log f st l m (cmd.while cond body)
         | cmd.seq s1 s2 =>
-            p <- eval_cmd_log f st log m s1;
-            let '(st, log, m) := p in
-            eval_cmd_log f st log m s2
-        | cmd.skip => Return (st, log, m)
+            'Some (st, m) <- eval_cmd f st m s1;
+            eval_cmd_log f st l m s2
+        | cmd.skip => Some (st, l, m)
         | cmd.call binds fname args =>
-          fimpl <- get e fname;
-          let '(params, rets, fbody) := fimpl in
-          argvs <- option_all (List.map (eval_expr st) args);
-          st0 <- putmany params argvs empty_map;
-          st1m' <- eval_cmd_log f st0 log m fbody;
-          let '(st1, log, m') := st1m' in
-          retvs <- option_all (List.map (get st1) rets);
-          st' <- putmany binds retvs st;
-          Return (st', log, m')
+          'Some (params, rets, fbody) <- get e fname;
+          'Some argvs <- option_all (List.map (eval_expr st) args);
+          'Some st0 <- putmany params argvs empty_map;
+          'Some (st1, l, m') <- eval_cmd_log f st0 l m fbody;
+          'Some retvs <- option_all (List.map (get st1) rets);
+          'Some st' <- putmany binds retvs st;
+          Some (st', l, m')
         | cmd.interact _ _ _ => None (* unsupported *)
         end
       end.
