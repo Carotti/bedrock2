@@ -118,22 +118,22 @@ Section ExprImp1.
             'Some (l, a) <- eval_expr_log st l a;
             'Some (l, v) <- eval_expr_log st l v;
             'Some m <- write_mem a v m;
-            Some (st, l, m)
+            Some (st, incMetricInstructions l, m)
         | cmd.set x e =>
             'Some (l, v) <- eval_expr_log st l e;
-            Some (put st x v, l, m)
+            Some (put st x v, incMetricInstructions l, m)
         (*| cmd.unset x =>
             Some (remove_key st x, m)*)
         | cmd.cond cond bThen bElse =>
             'Some (l, v) <- eval_expr_log st l cond;
-            eval_cmd_log f st l m (if reg_eqb v (ZToReg 0) then bElse else bThen)
+            eval_cmd_log f st (incMetricInstructions l) m (if reg_eqb v (ZToReg 0) then bElse else bThen)
         | cmd.while cond body =>
             'Some (l, v) <- eval_expr_log st l cond;
-            if reg_eqb v (ZToReg 0) then Some (st, l, m) else
+            if reg_eqb v (ZToReg 0) then Some (st, incMetricInstructions l, m) else
               'Some (st, m) <- eval_cmd f st m body;
-              eval_cmd_log f st l m (cmd.while cond body)
+              eval_cmd_log f st (incMetricInstructions l) m (cmd.while cond body)
         | cmd.seq s1 s2 =>
-            'Some (st, m) <- eval_cmd f st m s1;
+            'Some (st, l, m) <- eval_cmd_log f st l m s1;
             eval_cmd_log f st l m s2
         | cmd.skip => Some (st, l, m)
         | cmd.call binds fname args =>
@@ -143,7 +143,7 @@ Section ExprImp1.
           'Some (st1, l, m') <- eval_cmd_log f st0 l m fbody;
           'Some retvs <- option_all (List.map (get st1) rets);
           'Some st' <- putmany binds retvs st;
-          Some (st', l, m')
+          Some (st', incMetricInstructions l, m')
         | cmd.interact _ _ _ => None (* unsupported *)
         end
       end.
