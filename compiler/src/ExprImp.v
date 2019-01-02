@@ -110,6 +110,15 @@ Section ExprImp1.
         end
       end.
 
+    Fixpoint evaluate_call_args_log (st: state) (args: list expr) (l : MetricLog) :=
+      match args with
+      | [] => Some ([], l)
+      | a :: t =>
+        'Some (l', v) <- eval_expr_log st l a;
+        'Some (args, finalL) <- evaluate_call_args_log st t l';
+        Some (v :: args, finalL)
+      end.
+
     Fixpoint eval_cmd_log(f: nat)(st: state)(l: MetricLog)(m: @mem mword)(s: cmd): option (state *  MetricLog * (@mem mword)) :=
       match f with
       | 0 => None (* out of fuel *)
@@ -130,15 +139,15 @@ Section ExprImp1.
         | cmd.while cond body =>
             'Some (l, v) <- eval_expr_log st l cond;
             if reg_eqb v (ZToReg 0) then Some (st, incMetricInstructions l, m) else
-              'Some (st, m) <- eval_cmd f st m body;
-              eval_cmd_log f st (incMetricInstructions l) m (cmd.while cond body)
+              'Some (st, l, m) <- eval_cmd_log f st (incMetricInstructions l) m body;
+              eval_cmd_log f st l m (cmd.while cond body)
         | cmd.seq s1 s2 =>
             'Some (st, l, m) <- eval_cmd_log f st l m s1;
             eval_cmd_log f st l m s2
         | cmd.skip => Some (st, l, m)
         | cmd.call binds fname args =>
           'Some (params, rets, fbody) <- get e fname;
-          'Some argvs <- option_all (List.map (eval_expr st) args);
+          'Some (argvs, l) <- evaluate_call_args_log st args l;
           'Some st0 <- putmany params argvs empty_map;
           'Some (st1, l, m') <- eval_cmd_log f st0 l m fbody;
           'Some retvs <- option_all (List.map (get st1) rets);
@@ -188,9 +197,23 @@ Section ExprImp1.
                            final = (initialSt, finalM).
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_store_log: forall fuel initialSt initialM a v final nbytes initialLog,
+        eval_cmd_log (S fuel) initialSt initialLog initialM (cmd.store nbytes a v) =  Some final ->
+        exists av l l' vv finalM, eval_expr_log initialSt initialLog a = Some (l, av) /\
+                             eval_expr_log initialSt l v = Some (l', vv) /\
+                             write_mem av vv initialM = Some finalM /\
+                             final = (initialSt, incMetricInstructions l', finalM).
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_set: forall f st1 m1 p2 x e,
-      eval_cmd (S f) st1 m1 (cmd.set x e) = Some p2 ->
-      exists v, eval_expr st1 e = Some v /\ p2 = (put st1 x v, m1).
+        eval_cmd (S f) st1 m1 (cmd.set x e) = Some p2 ->
+        exists v, eval_expr st1 e = Some v /\ p2 = (put st1 x v, m1).
+    Proof. inversion_lemma. Qed.
+      
+    Lemma invert_eval_set_log: forall f st1 m1 p2 x e initialLog,
+      eval_cmd_log (S f) st1 initialLog m1 (cmd.set x e) = Some p2 ->
+      exists l v, eval_expr_log st1 initialLog e = Some (l, v) /\
+                  p2 = (put st1 x v, incMetricInstructions l, m1).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_cond: forall f st1 m1 p2 cond bThen bElse,
@@ -201,6 +224,16 @@ Section ExprImp1.
          cv = ZToReg 0  /\ eval_cmd f st1 m1 bElse = Some p2).
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_cond_log: forall f st1 m1 p2 cond bThen bElse initialLog,
+        eval_cmd_log (S f) st1 initialLog m1 (cmd.cond cond bThen bElse) = Some p2 ->
+        exists cv l,
+          eval_expr_log st1 initialLog cond = Some (l, cv) /\
+          (cv <> ZToReg 0 /\
+           eval_cmd_log f st1 (incMetricInstructions l) m1 bThen = Some p2 \/
+           cv = ZToReg 0  /\
+           eval_cmd_log f st1 (incMetricInstructions l) m1 bElse = Some p2).
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_while: forall st1 m1 p3 f cond body,
       eval_cmd (S f) st1 m1 (cmd.while cond body) = Some p3 ->
       exists cv,
@@ -209,15 +242,35 @@ Section ExprImp1.
                                      eval_cmd f st2 m2 (cmd.while cond body) = Some p3) \/
          cv = ZToReg 0 /\ p3 = (st1, m1)).
     Proof. inversion_lemma. Qed.
+    
+    Lemma invert_eval_while_log: forall st1 m1 p3 f cond body initialLog,
+        eval_cmd_log (S f) st1 initialLog m1 (cmd.while cond body) = Some p3 ->
+        exists cv l,
+          eval_expr_log st1 initialLog cond = Some (l, cv) /\
+          (cv <> ZToReg 0 /\ (exists st2 l2 m2, eval_cmd_log f st1 (incMetricInstructions l) m1 body = Some (st2, l2, m2) /\ 
+                                             eval_cmd_log f st2 l2 m2 (cmd.while cond body) = Some p3) \/
+                             cv = ZToReg 0 /\ p3 = (st1, incMetricInstructions l, m1)).
+    Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_seq: forall st1 m1 p3 f s1 s2,
       eval_cmd (S f) st1 m1 (cmd.seq s1 s2) = Some p3 ->
       exists st2 m2, eval_cmd f st1 m1 s1 = Some (st2, m2) /\ eval_cmd f st2 m2 s2 = Some p3.
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_seq_log: forall st1 m1 p3 f s1 s2 initialLog,
+        eval_cmd_log (S f) st1 initialLog m1 (cmd.seq s1 s2) = Some p3 ->
+        exists st2 l2 m2, eval_cmd_log f st1 initialLog m1 s1 = Some (st2, l2, m2) /\
+                          eval_cmd_log f st2 l2 m2 s2 = Some p3.
+    Proof. inversion_lemma. Qed.
+
     Lemma invert_eval_skip: forall st1 m1 p2 f,
       eval_cmd (S f) st1 m1 cmd.skip = Some p2 ->
       p2 = (st1, m1).
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_skip_log: forall st1 l1 m1 p2 f,
+        eval_cmd_log (S f) st1 l1 m1 cmd.skip = Some p2 ->
+        p2 = (st1, l1, m1).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_call : forall st m1 p2 f binds fname args,
@@ -232,8 +285,25 @@ Section ExprImp1.
         p2 = (st', m').
     Proof. inversion_lemma. Qed.
 
+    Lemma invert_eval_call_log : forall st l m1 p2 f binds fname args,
+        eval_cmd_log (S f) st l m1 (cmd.call binds fname args) = Some p2 ->
+        exists params rets fbody argvs st0 st1 l0 l1 m' retvs st',
+          get e fname = Some (params, rets, fbody) /\
+          evaluate_call_args_log st args l = Some (argvs, l0) /\
+          putmany params argvs empty_map = Some st0 /\
+          eval_cmd_log f st0 l0 m1 fbody = Some (st1, l1, m') /\
+          option_all (List.map (get st1) rets) = Some retvs /\
+          putmany binds retvs st = Some st' /\
+          p2 = (st', incMetricInstructions l1, m').
+    Proof. inversion_lemma. eauto 18. Qed.
+      
     Lemma invert_eval_interact : forall st m1 p2 f binds fname args,
       eval_cmd (S f) st m1 (cmd.interact binds fname args) = Some p2 ->
+      False.
+    Proof. inversion_lemma. Qed.
+
+    Lemma invert_eval_interact_log : forall st l m1 p2 f binds fname args,
+      eval_cmd_log (S f) st l m1 (cmd.interact binds fname args) = Some p2 ->
       False.
     Proof. inversion_lemma. Qed.
 
@@ -327,6 +397,31 @@ Ltac invert_eval_cmd :=
     ]
   end.
 
+Ltac invert_eval_cmd_log :=
+  lazymatch goal with
+  | E: eval_cmd_log _ (S ?fuel) _ _ _ ?s = Some _ |- _ =>
+    destruct s;
+    [ apply invert_eval_skip_log in E
+    | apply invert_eval_set_log in E
+    | apply invert_eval_store_log in E
+    | apply invert_eval_cond_log in E
+    | apply invert_eval_seq_log in E
+    | apply invert_eval_while_log in E
+    | apply invert_eval_call_log in E
+    | apply invert_eval_interact_log in E ];
+    deep_destruct E;
+    [ let x := fresh "Case_skip" in pose proof tt as x; move x at top 
+    | let x := fresh "Case_set" in pose proof tt as x; move x at top
+    | let x := fresh "Case_store" in pose proof tt as x; move x at top
+    | let x := fresh "Case_cond_Then" in pose proof tt as x; move x at top
+    | let x := fresh "Case_cond_Else" in pose proof tt as x; move x at top
+    | let x := fresh "Case_seq" in pose proof tt as x; move x at top
+    | let x := fresh "Case_while_Done" in pose proof tt as x; move x at top
+    | let x := fresh "Case_while_NotDone" in pose proof tt as x; move x at top
+    | let x := fresh "Case_call" in pose proof tt as x; move x at top
+    | let x := fresh "Case_interact" in pose proof tt as x; move x at top
+    ]
+  end.
 
 Section ExprImp2.
 

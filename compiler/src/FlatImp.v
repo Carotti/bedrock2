@@ -137,7 +137,7 @@ Section FlatImp1.
             p <- eval_stmt_log f st log m s1;
             let '(st, log, m) := p in
             eval_stmt_log f st log m s2
-        | SSkip => Return (st, incMetricInstructions log, m)
+        | SSkip => Return (st, log, m)
         | SCall binds fname args =>
           fimpl <- get e fname;
           let '(params, rets, fbody) := fimpl in
@@ -286,7 +286,7 @@ Section FlatImp1.
 
     Lemma invert_eval_SSkip_log: forall fuel initialSt initialM final log,
       eval_stmt_log (S fuel) initialSt log initialM SSkip = Some final ->
-      final = (initialSt, incMetricInstructions log, initialM).
+      final = (initialSt, log, initialM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_SCall : forall st m1 p2 f binds fname args,
