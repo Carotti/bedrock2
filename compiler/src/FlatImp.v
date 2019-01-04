@@ -493,6 +493,38 @@ Section FlatImp2.
       eauto.
   Qed.
 
+  Lemma increase_fuel_still_Success_log: forall fuel1 fuel2 (e: env) initialSt initialM s final initialLog,
+    fuel1 <= fuel2 ->
+    eval_stmt_log var func e fuel1 initialSt initialLog initialM s = Some final ->
+    eval_stmt_log var func e fuel2 initialSt initialLog initialM s = Some final.
+  Proof.
+    induction fuel1; introv L Ev.
+    - inversions Ev.
+    - destruct fuel2; [omega|].
+      assert (fuel1 <= fuel2) as F by omega. specialize IHfuel1 with (1 := F).
+      destruct final as [[finalSt finalLog] finalM].
+      invert_eval_stmt_log; cbn in *;
+      repeat match goal with
+      | IH: _, H: _ |- _ =>
+          let IH' := fresh IH in pose proof IH as IH';
+          specialize IH' with (1 := H);
+          ensure_new IH'
+      end;
+      repeat match goal with
+      | H: _ = Some _ |- _ => rewrite H
+      end;
+      try congruence;
+      try simpl_if;
+      rewrite? (proj2 (reg_eqb_true _ _) eq_refl);
+      repeat match goal with
+             | H:     (@eq mword _ _)  |- _ => apply reg_eqb_eq in H; rewrite H
+             | H: not (@eq mword _ _)  |- _ => apply reg_eqb_ne in H; rewrite H
+             end;
+      rewrite? reg_eqb_eq by reflexivity;
+      try (repeat f_equal; unfold_log_inc_dec; fold_log);
+      eauto.
+  Qed.
+
   Lemma modVarsSound: forall fuel e s initialSt initialM finalSt finalM,
     eval_stmt var func e fuel initialSt initialM s = Some (finalSt, finalM) ->
     only_differ initialSt (modVars var func s) finalSt.
