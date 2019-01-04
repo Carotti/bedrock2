@@ -299,11 +299,6 @@ Section FlattenExpr.
     unfold Z.succ;
     lia.
 
-  Lemma test : forall (a b c x y z : Z),
-      a - b <= (x - y) ->
-      b - c <= (y - z) ->
-      a - c <= x - z.
-  Proof. lia.
   (* Note: If you want to get in the conclusion
      "only_differ initialL (vars_range firstFree (S resVar)) finalL"
      this needn't be part of this lemma, because it follows from
@@ -368,6 +363,13 @@ Section FlattenExpr.
         apply eval_binop_compat.
       }
       { unfold fst. unfold incMetricInstructions. unfold incMetricInstructions_n. unfold Z.succ.
+        repeat match goal with
+        | H: _ |- context[?x] =>
+          match x with
+          | instructions {| instructions := ?v |} => replace x with v by reflexivity
+          end
+        end. lia.
+      }
   Qed.
 
   Ltac simpl_reg_eqb :=
