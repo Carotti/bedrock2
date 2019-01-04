@@ -11,7 +11,8 @@ Require Import riscv.Utility.
 Require bedrock2.Syntax.
 Require bedrock2.Semantics.
 Require Import bedrock2.Macros.
-
+Require Import riscv.MinimalLogging.
+Require Import Coq.micromega.Lia.
 
 Section FlattenExpr.
 
@@ -271,6 +272,7 @@ Section FlattenExpr.
     repeat match goal with
     | H: _ |- _ => unique eapply flattenExpr_freshVarUsage in copy of H
     | H: _ |- _ => unique eapply FlatImp.modVarsSound in copy of H
+    | H: _ |- _ => unique eapply FlatImp.modVarsSound_log in copy of H
     | H: _ |- _ => unique eapply flattenExpr_modifies_resVar in copy of H
     | H: _ |- _ => unique eapply flattenExpr_modVars_spec in copy of H
     | H: _ |- _ => unique eapply flattenStmt_freshVarUsage in copy of H
@@ -280,70 +282,92 @@ Section FlattenExpr.
 
   Ltac fuel_increasing_rewrite :=
     lazymatch goal with
-    | Ev:        FlatImp.eval_stmt _ _ ?ENV ?Fuel1 ?initialSt ?initialM ?s = ?final
-      |- context [FlatImp.eval_stmt _ _ ?ENV ?Fuel2 ?initialSt ?initialM ?s]
+    | Ev:        FlatImp.eval_stmt_log _ _ ?ENV ?Fuel1 ?initialSt ?initialLog ?initialM ?s = ?final
+      |- context [FlatImp.eval_stmt_log _ _ ?ENV ?Fuel2 ?initialSt ?initialLog ?initialM ?s]
       => let IE := fresh in assert (Fuel1 <= Fuel2) as IE by omega;
-         eapply FlatImp.increase_fuel_still_Success in Ev; [|apply IE];
+         eapply FlatImp.increase_fuel_still_Success_log in Ev; [|apply IE];
          clear IE;
          rewrite Ev
     end.
 
+  Open Scope Z_scope.
+
+  Ltac solve_instructions :=
+    unfold incMetricInstructions_n;
+    unfold incMetricInstructions;
+    unfold instructions;
+    unfold Z.succ;
+    lia.
+
+  Lemma test : forall (a b c x y z : Z),
+      a - b <= (x - y) ->
+      b - c <= (y - z) ->
+      a - c <= x - z.
+  Proof. lia.
   (* Note: If you want to get in the conclusion
      "only_differ initialL (vars_range firstFree (S resVar)) finalL"
      this needn't be part of this lemma, because it follows from
      flattenExpr_modVars_spec and FlatImp.modVarsSound *)
-  Lemma flattenExpr_correct_aux env : forall e ngs1 ngs2 resVar (s: FlatImp.stmt var func) (initialH initialL: state) initialM res,
+  Lemma flattenExpr_correct_aux env : forall e ngs1 ngs2 resVar (s: FlatImp.stmt var func) (initialH initialL: state) initialM res initialLogH finalLogH initialLogL,
     flattenExpr ngs1 e = (s, resVar, ngs2) ->
     extends initialL initialH ->
     undef initialH (allFreshVars ngs1) ->
-    ExprImp.eval_expr initialH e = Some res ->
-    exists (fuel: nat) (finalL: state),
-      FlatImp.eval_stmt _ _ env fuel initialL initialM s = Some (finalL, initialM) /\
-      get (MapFunctions := stateMap) finalL resVar = Some res.
+    ExprImp.eval_expr_log initialH initialLogH e = Some (finalLogH, res) ->
+    exists (fuel: nat) (finalL: state) finalLogL,
+      FlatImp.eval_stmt_log _ _ env fuel initialL initialLogL initialM s = Some (finalL, finalLogL, initialM) /\
+      get (MapFunctions := stateMap) finalL resVar = Some res /\
+      (finalLogL.(instructions) - initialLogL.(instructions)) <=
+      20 * (finalLogH.(instructions) - initialLogH.(instructions)).
   Proof.
     induction e; introv F Ex U Ev.
     - repeat (inversionss; try destruct_one_match_hyp).
       match goal with
       | |- context [get _ resVar = Some ?res] =>
-         exists 1%nat (put initialL resVar res)
+         exists 1%nat (put initialL resVar res) (incMetricInstructions_n 15 initialLogL)
       end.
-      split; state_calc.
+      split; split; [state_calc | solve_instructions].
     - repeat (inversionss; try destruct_one_match_hyp).
-      exists 1%nat (put initialL resVar res). repeat split.
-      + simpl. unfold extends in Ex. apply Ex in H0. rewrite H0. simpl. reflexivity.
+      exists 1%nat (put initialL resVar res) (incMetricInstructions initialLogL). repeat split.
+      + simpl. unfold extends in Ex. eapply Ex in E0. rewrite E0. reflexivity.
       + state_calc.
+      + solve_instructions.
     - repeat (inversionss; try destruct_one_match_hyp).
     - repeat (inversionss; try destruct_one_match_hyp).
       pose_flatten_var_ineqs.
-      specialize IHe1 with (initialM := initialM) (1 := E) (2 := Ex).
+      destruct p0 as [l0 w0].
+      destruct p1 as [l1 w1].
+      specialize IHe1 with (initialM := initialM) (initialLogH := initialLogH) (initialLogL := initialLogL) (1 := E) (2 := Ex) (finalLogH := l0).
       specializes IHe1. {
         clear IHe2.
         state_calc.
       }
       { eassumption. }
-      destruct IHe1 as [fuel1 [midL [Ev1 G1]]].
+      destruct IHe1 as [fuel1 [midL [midLog [Ev1 [G1 L1]]]]].
       progress pose_flatten_var_ineqs.
       specialize IHe2 with (initialH := initialH) (initialL := midL) (initialM := initialM)
-         (1 := E0).
-      specializes IHe2.
+                           (1 := E0) (initialLogH := l0) (initialLogL := midLog).                           specializes IHe2.
       { state_calc. }
       { state_calc. }
       { eassumption. }
-      destruct IHe2 as [fuel2 [preFinalL [Ev2 G2]]].
+      destruct IHe2 as [fuel2 [preFinalL [finalLog [Ev2 [G2 L2]]]]].
       remember (Datatypes.S (Datatypes.S (fuel1 + fuel2))) as f0.
       remember (Datatypes.S (fuel1 + fuel2)) as f.
       (*                                or     (Op.eval_binop (convert_bopname op) w w0) ? *)
-      exists (Datatypes.S f0) (put preFinalL resVar (Semantics.interp_binop op w w0)).
+      exists (Datatypes.S f0) (put preFinalL resVar (Semantics.interp_binop op w0 w1))
+             (incMetricInstructions_n 3 finalLog).
       pose_flatten_var_ineqs.
-      split; [|apply get_put_same].
+      repeat split; [|apply get_put_same|].
       simpl. fuel_increasing_rewrite.
       subst f0. simpl. fuel_increasing_rewrite.
       subst f. simpl.
-      assert (get preFinalL v = Some w) as G1'. {
+      assert (get preFinalL v = Some w0) as G1'. {
         state_calc.
       }
-      rewrite G1'. simpl. rewrite G2. simpl. repeat f_equal.
-      apply eval_binop_compat.
+      {
+        rewrite G1'. simpl. rewrite G2. simpl. repeat f_equal.
+        apply eval_binop_compat.
+      }
+      { unfold fst. unfold incMetricInstructions. unfold incMetricInstructions_n. unfold Z.succ.
   Qed.
 
   Ltac simpl_reg_eqb :=
@@ -355,20 +379,25 @@ Section FlattenExpr.
            end.
 
   Lemma flattenStmt_correct_aux:
-    forall fuelH sH sL ngs ngs' (initialH finalH initialL: state) initialM finalM,
+    forall fuelH sH sL ngs ngs' (initialH finalH initialL: state) initialM finalM
+           initialLogH initialLogL finalLogH,
     flattenStmt ngs sH = (sL, ngs') ->
     extends initialL initialH ->
     undef initialH (allFreshVars ngs) ->
     disjoint (ExprImp.modVars sH) (allFreshVars ngs) ->
-    ExprImp.eval_cmd empty_map fuelH initialH initialM sH = Some (finalH, finalM) ->
-    exists fuelL finalL,
-      FlatImp.eval_stmt _ _ empty_map fuelL initialL initialM sL = Some (finalL, finalM) /\
-      extends finalL finalH.
+    ExprImp.eval_cmd_log empty_map fuelH initialH initialLogH initialM sH =
+    Some (finalH, finalLogH, finalM) ->
+    exists fuelL finalL finalLogL,
+      FlatImp.eval_stmt_log _ _ empty_map fuelL initialL initialLogL initialM sL =
+      Some (finalL, finalLogL, finalM) /\
+      extends finalL finalH /\
+      (finalLogL.(instructions) - initialLogL.(instructions)) <=
+      10 * (finalLogH.(instructions) - initialLogH.(instructions)).
   Proof.
     induction fuelH; introv F Ex U Di Ev; [solve [inversionss] |].
-    ExprImp.invert_eval_cmd.
+    ExprImp.invert_eval_cmd_log.
     - simpl in F. inversions F. destruct_pair_eqs.
-      exists 1%nat initialL. auto.
+      exists 1%nat initialL initialLogL. auto.
     - repeat (inversionss; try destruct_one_match_hyp).
       pose proof flattenExpr_correct_aux as P.
       specialize (P empty_map) with (initialM := initialM) (1 := E) (2 := Ex) (3 := U) (4 := Ev0).
