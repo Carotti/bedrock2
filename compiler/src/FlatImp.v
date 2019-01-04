@@ -94,12 +94,6 @@ Section FlatImp1.
         end
       end.
 
-    Definition incMetricInstructions_n (n : Z) (l : MetricLog)  : MetricLog :=
-      mkMetricLog ((instructions l) + n) (stores l) (loads l) (jumps l).
-
-    Definition decMetricInstructions_n (n : Z) (l : MetricLog)  : MetricLog :=
-      mkMetricLog ((instructions l) - n) (stores l) (loads l) (jumps l).
-
     Fixpoint eval_stmt_log(f: nat)(st: state)(log: MetricLog)(m: mem)(s: stmt): option (state * MetricLog * mem) :=
       match f with
       | 0 => None (* out of fuel *)
@@ -516,4 +510,23 @@ Section FlatImp2.
       state_calc.
       refine (only_differ_putmany _ _ _ _ _ _); eassumption.
   Qed.
+
+  Lemma modVarsSound_log: forall fuel e s initialSt initialM initialLog finalSt finalM finalLog,
+    eval_stmt_log var func e fuel initialSt initialLog initialM s = Some (finalSt, finalLog, finalM) ->
+    only_differ initialSt (modVars var func s) finalSt.
+  Proof.
+    induction fuel; introv Ev.
+    - discriminate.
+    - invert_eval_stmt_log; simpl in *; inversionss;
+      repeat match goal with
+      | IH: _, H: _ |- _ =>
+          let IH' := fresh IH in pose proof IH as IH';
+          specialize IH' with (1 := H);
+          simpl in IH';
+          ensure_new IH'
+      end;
+      state_calc.
+      refine (only_differ_putmany _ _ _ _ _ _); eassumption.
+  Qed.
+
 End FlatImp2.
