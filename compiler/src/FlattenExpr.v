@@ -293,8 +293,8 @@ Section FlattenExpr.
   Open Scope Z_scope.
 
   Ltac solve_instructions :=
-    unfold incMetricInstructions_n;
-    unfold incMetricInstructions;
+    unfold addMetricInstructions;
+    unfold addMetricInstructions 1;
     unfold instructions;
     unfold Z.succ;
     lia.
@@ -318,11 +318,11 @@ Section FlattenExpr.
     - repeat (inversionss; try destruct_one_match_hyp).
       match goal with
       | |- context [get _ resVar = Some ?res] =>
-         exists 1%nat (put initialL resVar res) (incMetricInstructions_n 15 initialLogL)
+         exists 1%nat (put initialL resVar res) (addMetricInstructions 15 initialLogL)
       end.
       split; split; [state_calc | solve_instructions].
     - repeat (inversionss; try destruct_one_match_hyp).
-      exists 1%nat (put initialL resVar res) (incMetricInstructions initialLogL). repeat split.
+      exists 1%nat (put initialL resVar res) (addMetricInstructions 1 initialLogL). repeat split.
       + simpl. unfold extends in Ex. eapply Ex in E0. rewrite E0. reflexivity.
       + state_calc.
       + solve_instructions.
@@ -349,7 +349,7 @@ Section FlattenExpr.
       remember (Datatypes.S (fuel1 + fuel2)) as f.
       (*                                or     (Op.eval_binop (convert_bopname op) w w0) ? *)
       exists (Datatypes.S f0) (put preFinalL resVar (Semantics.interp_binop op w0 w1))
-             (incMetricInstructions_n 3 finalLog).
+             (addMetricInstructions 3 finalLog).
       pose_flatten_var_ineqs.
       repeat split; [|apply get_put_same|].
       simpl. fuel_increasing_rewrite.
@@ -362,7 +362,7 @@ Section FlattenExpr.
         rewrite G1'. simpl. rewrite G2. simpl. repeat f_equal.
         apply eval_binop_compat.
       }
-      { unfold fst. unfold incMetricInstructions. unfold incMetricInstructions_n. unfold Z.succ.
+      { unfold fst. unfold addMetricInstructions 1. unfold addMetricInstructions. unfold Z.succ.
         repeat match goal with
         | H: _ |- context[?x] =>
           match x with

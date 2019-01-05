@@ -55,16 +55,16 @@ Section ExprImp1.
 
   Fixpoint eval_expr_log(st: state)(l: MetricLog)(e: expr): option (MetricLog * mword) :=
     match e with
-    | expr.literal v => Some (incMetricInstructions l, ZToReg v)
+    | expr.literal v => Some (addMetricInstructions 1 l, ZToReg v)
     | expr.var x => match get st x with
                     | None => None
-                    | Some z => Some (incMetricInstructions l, z)
+                    | Some z => Some (addMetricInstructions 1 l, z)
                     end
     | expr.load x a => None (* TODO *)
     | expr.op op e1 e2 =>
         'Some v1 <- eval_expr_log st l e1;
         'Some v2 <- eval_expr_log st (fst v1) e2;
-        Some (incMetricInstructions (fst v2), interp_binop op (snd v1) (snd v2))
+        Some (addMetricInstructions 1 (fst v2), interp_binop op (snd v1) (snd v2))
     end.
 
   Section WithEnv.
@@ -127,19 +127,19 @@ Section ExprImp1.
             'Some (l, a) <- eval_expr_log st l a;
             'Some (l, v) <- eval_expr_log st l v;
             'Some m <- write_mem a v m;
-            Some (st, incMetricInstructions l, m)
+            Some (st, addMetricInstructions 1 l, m)
         | cmd.set x e =>
             'Some (l, v) <- eval_expr_log st l e;
-            Some (put st x v, incMetricInstructions l, m)
+            Some (put st x v, addMetricInstructions 1 l, m)
         (*| cmd.unset x =>
             Some (remove_key st x, m)*)
         | cmd.cond cond bThen bElse =>
             'Some (l, v) <- eval_expr_log st l cond;
-            eval_cmd_log f st (incMetricInstructions l) m (if reg_eqb v (ZToReg 0) then bElse else bThen)
+            eval_cmd_log f st (addMetricInstructions 1 l) m (if reg_eqb v (ZToReg 0) then bElse else bThen)
         | cmd.while cond body =>
             'Some (l, v) <- eval_expr_log st l cond;
-            if reg_eqb v (ZToReg 0) then Some (st, incMetricInstructions l, m) else
-              'Some (st, l, m) <- eval_cmd_log f st (incMetricInstructions l) m body;
+            if reg_eqb v (ZToReg 0) then Some (st, addMetricInstructions 1 l, m) else
+              'Some (st, l, m) <- eval_cmd_log f st (addMetricInstructions 1 l) m body;
               eval_cmd_log f st l m (cmd.while cond body)
         | cmd.seq s1 s2 =>
             'Some (st, l, m) <- eval_cmd_log f st l m s1;
@@ -152,7 +152,7 @@ Section ExprImp1.
           'Some (st1, l, m') <- eval_cmd_log f st0 l m fbody;
           'Some retvs <- option_all (List.map (get st1) rets);
           'Some st' <- putmany binds retvs st;
-          Some (st', incMetricInstructions l, m')
+          Some (st', addMetricInstructions 1 l, m')
         | cmd.interact _ _ _ => None (* unsupported *)
         end
       end.
@@ -202,7 +202,7 @@ Section ExprImp1.
         exists av l l' vv finalM, eval_expr_log initialSt initialLog a = Some (l, av) /\
                              eval_expr_log initialSt l v = Some (l', vv) /\
                              write_mem av vv initialM = Some finalM /\
-                             final = (initialSt, incMetricInstructions l', finalM).
+                             final = (initialSt, addMetricInstructions 1 l', finalM).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_set: forall f st1 m1 p2 x e,
@@ -213,7 +213,7 @@ Section ExprImp1.
     Lemma invert_eval_set_log: forall f st1 m1 p2 x e initialLog,
       eval_cmd_log (S f) st1 initialLog m1 (cmd.set x e) = Some p2 ->
       exists l v, eval_expr_log st1 initialLog e = Some (l, v) /\
-                  p2 = (put st1 x v, incMetricInstructions l, m1).
+                  p2 = (put st1 x v, addMetricInstructions 1 l, m1).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_cond: forall f st1 m1 p2 cond bThen bElse,
@@ -229,9 +229,9 @@ Section ExprImp1.
         exists cv l,
           eval_expr_log st1 initialLog cond = Some (l, cv) /\
           (cv <> ZToReg 0 /\
-           eval_cmd_log f st1 (incMetricInstructions l) m1 bThen = Some p2 \/
+           eval_cmd_log f st1 (addMetricInstructions 1 l) m1 bThen = Some p2 \/
            cv = ZToReg 0  /\
-           eval_cmd_log f st1 (incMetricInstructions l) m1 bElse = Some p2).
+           eval_cmd_log f st1 (addMetricInstructions 1 l) m1 bElse = Some p2).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_while: forall st1 m1 p3 f cond body,
@@ -247,9 +247,9 @@ Section ExprImp1.
         eval_cmd_log (S f) st1 initialLog m1 (cmd.while cond body) = Some p3 ->
         exists cv l,
           eval_expr_log st1 initialLog cond = Some (l, cv) /\
-          (cv <> ZToReg 0 /\ (exists st2 l2 m2, eval_cmd_log f st1 (incMetricInstructions l) m1 body = Some (st2, l2, m2) /\ 
+          (cv <> ZToReg 0 /\ (exists st2 l2 m2, eval_cmd_log f st1 (addMetricInstructions 1 l) m1 body = Some (st2, l2, m2) /\ 
                                              eval_cmd_log f st2 l2 m2 (cmd.while cond body) = Some p3) \/
-                             cv = ZToReg 0 /\ p3 = (st1, incMetricInstructions l, m1)).
+                             cv = ZToReg 0 /\ p3 = (st1, addMetricInstructions 1 l, m1)).
     Proof. inversion_lemma. Qed.
 
     Lemma invert_eval_seq: forall st1 m1 p3 f s1 s2,
@@ -294,7 +294,7 @@ Section ExprImp1.
           eval_cmd_log f st0 l0 m1 fbody = Some (st1, l1, m') /\
           option_all (List.map (get st1) rets) = Some retvs /\
           putmany binds retvs st = Some st' /\
-          p2 = (st', incMetricInstructions l1, m').
+          p2 = (st', addMetricInstructions 1 l1, m').
     Proof. inversion_lemma. eauto 18. Qed.
       
     Lemma invert_eval_interact : forall st m1 p2 f binds fname args,
