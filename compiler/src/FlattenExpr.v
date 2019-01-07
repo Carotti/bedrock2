@@ -292,13 +292,6 @@ Section FlattenExpr.
 
   Open Scope Z_scope.
 
-  Ltac solve_instructions :=
-    unfold addMetricInstructions;
-    unfold addMetricInstructions 1;
-    unfold instructions;
-    unfold Z.succ;
-    lia.
-
   (* Note: If you want to get in the conclusion
      "only_differ initialL (vars_range firstFree (S resVar)) finalL"
      this needn't be part of this lemma, because it follows from
@@ -312,7 +305,7 @@ Section FlattenExpr.
       FlatImp.eval_stmt_log _ _ env fuel initialL initialLogL initialM s = Some (finalL, finalLogL, initialM) /\
       get (MapFunctions := stateMap) finalL resVar = Some res /\
       (finalLogL.(instructions) - initialLogL.(instructions)) <=
-      20 * (finalLogH.(instructions) - initialLogH.(instructions)).
+      15 * (finalLogH.(instructions) - initialLogH.(instructions)).
   Proof.
     induction e; introv F Ex U Ev.
     - repeat (inversionss; try destruct_one_match_hyp).
@@ -320,12 +313,12 @@ Section FlattenExpr.
       | |- context [get _ resVar = Some ?res] =>
          exists 1%nat (put initialL resVar res) (addMetricInstructions 15 initialLogL)
       end.
-      split; split; [state_calc | solve_instructions].
+      split; split; [state_calc | solve_MetricLog].
     - repeat (inversionss; try destruct_one_match_hyp).
       exists 1%nat (put initialL resVar res) (addMetricInstructions 1 initialLogL). repeat split.
       + simpl. unfold extends in Ex. eapply Ex in E0. rewrite E0. reflexivity.
       + state_calc.
-      + solve_instructions.
+      + solve_MetricLog.
     - repeat (inversionss; try destruct_one_match_hyp).
     - repeat (inversionss; try destruct_one_match_hyp).
       pose_flatten_var_ineqs.
@@ -362,14 +355,7 @@ Section FlattenExpr.
         rewrite G1'. simpl. rewrite G2. simpl. repeat f_equal.
         apply eval_binop_compat.
       }
-      { unfold fst. unfold addMetricInstructions 1. unfold addMetricInstructions. unfold Z.succ.
-        repeat match goal with
-        | H: _ |- context[?x] =>
-          match x with
-          | instructions {| instructions := ?v |} => replace x with v by reflexivity
-          end
-        end. lia.
-      }
+      { solve_MetricLog. }
   Qed.
 
   Ltac simpl_reg_eqb :=
@@ -394,58 +380,62 @@ Section FlattenExpr.
       Some (finalL, finalLogL, finalM) /\
       extends finalL finalH /\
       (finalLogL.(instructions) - initialLogL.(instructions)) <=
-      10 * (finalLogH.(instructions) - initialLogH.(instructions)).
+      15 * (finalLogH.(instructions) - initialLogH.(instructions)).
   Proof.
     induction fuelH; introv F Ex U Di Ev; [solve [inversionss] |].
     ExprImp.invert_eval_cmd_log.
     - simpl in F. inversions F. destruct_pair_eqs.
-      exists 1%nat initialL initialLogL. auto.
+      exists 1%nat initialL initialLogL. repeat split; [auto|]. solve_MetricLog.
     - repeat (inversionss; try destruct_one_match_hyp).
       pose proof flattenExpr_correct_aux as P.
-      specialize (P empty_map) with (initialM := initialM) (1 := E) (2 := Ex) (3 := U) (4 := Ev0).
-      destruct P as [fuelL [prefinalL [Evs G]]].
+      specialize (P empty_map) with (initialM := initialM) (1 := E) (2 := Ex) (3 := U) (4 := Ev0)
+                                    (initialLogL := initialLogL).
+      destruct P as [fuelL [prefinalL [prefinalLogL [Evs [G L]]]]].
       remember (Datatypes.S fuelL) as SfuelL.
-      exists (Datatypes.S SfuelL). eexists. repeat split.
+      exists (Datatypes.S SfuelL). eexists. exists (addMetricInstructions 1 prefinalLogL).
+      repeat split.
       + simpl.
-        assert (FlatImp.eval_stmt _ _ empty_map SfuelL initialL initialM s = Some (prefinalL, initialM)) as Evs'. {
-          eapply FlatImp.increase_fuel_still_Success; [|eassumption]. omega.
+        assert (FlatImp.eval_stmt_log _ _ empty_map SfuelL initialL initialLogL initialM s = Some (prefinalL, prefinalLogL, initialM)) as Evs'. {
+          eapply FlatImp.increase_fuel_still_Success_log; [|eassumption]. omega.
         }
         simpl in *.
         rewrite Evs'. subst SfuelL. simpl. rewrite G. simpl. reflexivity.
       + clear IHfuelH.
         pose_flatten_var_ineqs.
         state_calc.
+      + solve_MetricLog.
 
     - repeat (inversionss; try destruct_one_match_hyp).
       match goal with
-      | Ev: ExprImp.eval_expr _ _ = Some _ |- _ =>
+      | Ev: ExprImp.eval_expr_log _ _ _ = Some _ |- _ =>
         let P := fresh "P" in
         pose proof (flattenExpr_correct_aux empty_map) as P;
-        specialize P with (initialM := initialM) (4 := Ev);
+        specialize P with (initialM := initialM) (initialLogL := initialLogL) (4 := Ev);
         specializes P; [ eassumption .. | ];
         let fuelL := fresh "fuelL" in
         let prefinalL := fresh "prefinalL" in
-        destruct P as [fuelL [prefinalL P]];
+        let prefinalLogL := fresh "prefinalLogL" in
+        destruct P as [fuelL [prefinalL [prefinalLogL [P [G L]]]]];
         deep_destruct P
       end.
       match goal with
-      | Ev: ExprImp.eval_expr _ _ = Some _ |- _ =>
+      | Ev: ExprImp.eval_expr_log _ _ _ = Some _ |- _ =>
         let P := fresh "P" in
         pose proof (flattenExpr_correct_aux empty_map) as P;
-        specialize P with (initialL := prefinalL) (initialM := initialM) (4 := Ev)
+        specialize P with (initialL := prefinalL) (initialLogL := prefinalLogL) (initialM := initialM) (4 := Ev)
       end.
-      specializes P1.
+      specializes P0.
       { eassumption. }
       { pose_flatten_var_ineqs. clear IHfuelH. state_calc. }
       { pose_flatten_var_ineqs. clear IHfuelH. state_calc. }
-      destruct P1 as [fuelL2 P1]. deep_destruct P1.
-      exists (S (S (S (fuelL + fuelL2)))). eexists.
+      destruct P0 as [fuelL2 P0]. deep_destruct P0.
+      exists (S (S (S (fuelL + fuelL2)))). eexists. exists (addMetricInstructions 1 (addMetricStores 1 finalLogL)).
       remember (S (S (fuelL + fuelL2))) as Sf.
-      split.
+      repeat split.
       + simpl in *. fuel_increasing_rewrite. simpl. subst Sf.
         remember (S (fuelL + fuelL2)) as Sf. simpl. fuel_increasing_rewrite.
         subst Sf. simpl. rewrite_match.
-        assert (get finalL v = Some av) as G. {
+        assert (get finalL v = Some av) as G'. {
           clear IHfuelH. pose_flatten_var_ineqs. state_calc.
         }
         rewrite_match.
@@ -453,23 +443,23 @@ Section FlattenExpr.
       + clear IHfuelH.
         pose_flatten_var_ineqs.
         state_calc. (* TODO this takes more than a minute, which is annoying *)
-
+      + solve_MetricLog.
     - inversions F. repeat destruct_one_match_hyp. destruct_pair_eqs. subst.
       pose_flatten_var_ineqs.
       rename condition into condH, s into condL, s0 into sL1, s1 into sL2.
       pose proof (flattenExpr_correct_aux empty_map) as P.
-      specialize P with (initialM := initialM) (res := cv) (1 := E) (2 := Ex).
+      specialize P with (initialM := initialM) (initialLogL := initialLogL) (res := cv) (1 := E) (2 := Ex).
       specializes P; [eassumption|eassumption|].
-      destruct P as [fuelLcond [initial2L [Evcond G]]].
+      destruct P as [fuelLcond [initial2L [initial2LogL [Evcond [G L]]]]].
       pose_flatten_var_ineqs.
-      specialize IHfuelH with (initialL := initial2L) (1 := E0) (5 := Ev).
-      destruct IHfuelH as [fuelL [finalL [Evbranch Ex2]]].
+      specialize IHfuelH with (initialL := initial2L) (initialLogL := addMetricInstructions 2 (addMetricJumps 1 initial2LogL)) (1 := E0) (5 := Ev).
+      destruct IHfuelH as [fuelL [finalL [finalLogL [Evbranch [Ex2 L2]]]]].
       * state_calc.
       * state_calc.
       * simpl in Di.
         set_solver.
-      * exists (S (S (fuelLcond + fuelL))). eexists.
-        refine (conj _ Ex2).
+      * exists (S (S (fuelLcond + fuelL))). eexists. exists finalLogL.
+        refine (conj _ (conj Ex2 _)); [|solve_MetricLog].
         remember (S (fuelLcond + fuelL)) as tempFuel.
         simpl in *.
         fuel_increasing_rewrite.
@@ -483,18 +473,18 @@ Section FlattenExpr.
       rename condition into condH, s into condL, s0 into sL1, s1 into sL2.
       pose proof flattenExpr_correct_aux as P.
       specialize (P empty_map) with
-          (initialM := initialM) (res := (@ZToReg mword MW 0)) (1 := E) (2 := Ex).
+          (initialM := initialM) (initialLogL := initialLogL) (res := (@ZToReg mword MW 0)) (1 := E) (2 := Ex).
       specializes P; [eassumption|eassumption|].
-      destruct P as [fuelLcond [initial2L [Evcond G]]].
+      destruct P as [fuelLcond [initial2L [initial2LogL [Evcond [G L]]]]].
       pose_flatten_var_ineqs.
-      specialize IHfuelH with (initialL := initial2L) (1 := E1) (5 := Ev).
-      destruct IHfuelH as [fuelL [finalL [Evbranch Ex2]]].
+      specialize IHfuelH with (initialL := initial2L) (initialLogL := (addMetricInstructions 2 (addMetricJumps 1 initial2LogL))) (1 := E1) (5 := Ev).
+      destruct IHfuelH as [fuelL [finalL [finalLogL [Evbranch [Ex2 L2]]]]].
       * state_calc.
       * state_calc.
       * simpl in Di.
         set_solver.
-      * exists (S (S (fuelLcond + fuelL))). eexists.
-        refine (conj _ Ex2).
+      * exists (S (S (fuelLcond + fuelL))). eexists. exists finalLogL.
+        refine (conj _ (conj Ex2 _)); [| solve_MetricLog].
         remember (S (fuelLcond + fuelL)) as tempFuel.
         simpl in *.
         fuel_increasing_rewrite.
@@ -506,24 +496,25 @@ Section FlattenExpr.
 
     - simpl in F. do 2 destruct_one_match_hyp. inversions F.
       pose proof IHfuelH as IHfuelH2.
+      specialize IHfuelH with (initialLogL := initialLogL).
       specializes IHfuelH.
       1: exact E. 1: exact Ex. 3: eassumption.
       { clear IHfuelH2. state_calc. }
       { simpl in Di. set_solver. }
-      destruct IHfuelH as [fuelL1 [middleL [EvL1 Ex1]]].
+      destruct IHfuelH as [fuelL1 [middleL [middleLogL [EvL1 [Ex1 L1]]]]].
       rename IHfuelH2 into IHfuelH.
       rename s into sL1, s0 into sL2.
       pose_flatten_var_ineqs.
       simpl in Di.
-      pose proof ExprImp.modVarsSound as D1.
+      pose proof ExprImp.modVarsSound_log as D1.
       specialize D1 with (1 := Ev0).
-      specialize IHfuelH with (1 := E0) (2 := Ex1).
+      specialize IHfuelH with (1 := E0) (2 := Ex1) (initialLogL := middleLogL).
       specializes IHfuelH. 3: eassumption.
       { state_calc. }
       { state_calc. }
-      destruct IHfuelH as [fuelL2 [finalL [EvL2 Ex2]]].
-      exists (S (fuelL1 + fuelL2)) finalL.
-      refine (conj _ Ex2).
+      destruct IHfuelH as [fuelL2 [finalL [finalLogL [EvL2 [Ex2 L2]]]]].
+      exists (S (fuelL1 + fuelL2)) finalL. exists finalLogL.
+      refine (conj _ (conj Ex2 _)); [|solve_MetricLog].
       simpl in *.
       fuel_increasing_rewrite. fuel_increasing_rewrite. reflexivity.
 
@@ -532,28 +523,28 @@ Section FlattenExpr.
       simpl in F. do 3 destruct_one_match_hyp. destruct_pair_eqs. subst.
       rename s into sCond, s0 into sBody.
       pose proof flattenExpr_correct_aux as P.
-      specialize (P empty_map) with (res := cv) (initialM := initialM) (1 := E) (2 := Ex).
+      specialize (P empty_map) with (res := cv) (initialM := initialM) (initialLogL := initialLogL) (1 := E) (2 := Ex).
       specializes P; [eassumption|eassumption|].
-      destruct P as [fuelLcond [initial2L [EvcondL G]]].
+      destruct P as [fuelLcond [initial2L [initial2LogL [EvcondL [G L]]]]].
       pose_flatten_var_ineqs.
-      specialize IHfuelH with (1 := E0) (5 := Ev2) as IH.
+      specialize IHfuelH with (1 := E0) (5 := Ev2) (initialLogL := initial2LogL) as IH.
       specialize (IH initial2L).
       specializes IH.
       { state_calc. }
       { state_calc. }
       { set_solver. }
-      destruct IH as [fuelL1 [middleL [EvL1 Ex1]]].
+      destruct IH as [fuelL1 [middleL [middleLogL [EvL1 [Ex1 L1]]]]].
       pose_flatten_var_ineqs.
-      specialize IHfuelH with (initialL := middleL) (1 := F0) (5 := Ev).
+      specialize IHfuelH with (initialL := middleL) (initialLogL := (addMetricInstructions 2 (addMetricJumps 1 middleLogL))) (1 := F0) (5 := Ev).
       specializes IHfuelH.
       { state_calc. }
-      { pose proof ExprImp.modVarsSound as D1.
+      { pose proof ExprImp.modVarsSound_log as D1.
         specialize D1 with (1 := Ev2).
-        state_calc. }
+         state_calc. }
       { set_solver. }
-      destruct IHfuelH as [fuelL2 [finalL [EvL2 Ex2]]].
-      exists (S (fuelL1 + fuelL2 + fuelLcond)) finalL.
-      refine (conj _ Ex2).
+      destruct IHfuelH as [fuelL2 [finalL [finalLogL [EvL2 [Ex2 L2]]]]].
+      exists (S (fuelL1 + fuelL2 + fuelLcond)) finalL finalLogL.
+      refine (conj _ (conj Ex2 _)); [|solve_MetricLog].
       simpl in *.
       fuel_increasing_rewrite.
       rewrite G. simpl. simpl_reg_eqb.
@@ -565,12 +556,12 @@ Section FlattenExpr.
       simpl in F. do 3 destruct_one_match_hyp. destruct_pair_eqs. subst.
       rename s into sCond, s0 into sBody.
       pose proof (flattenExpr_correct_aux empty_map) as P.
-      specialize P with (res := (@ZToReg mword MW 0)) (initialM := initialM) (1 := E) (2 := Ex).
+      specialize P with (res := (@ZToReg mword MW 0)) (initialM := initialM) (initialLogL := initialLogL) (1 := E) (2 := Ex).
       specializes P; [eassumption|eassumption|].
-      destruct P as [fuelLcond [initial2L [EvcondL G]]].
-      exists (S fuelLcond) initial2L.
+      destruct P as [fuelLcond [initial2L [initial2LogL [EvcondL [G L]]]]].
+      exists (S fuelLcond) initial2L (addMetricInstructions 1 (addMetricJumps 1 initial2LogL)).
       pose_flatten_var_ineqs.
-      split; [|state_calc].
+      repeat split; [|state_calc|solve_MetricLog].
       simpl in*.
       fuel_increasing_rewrite.
       rewrite G. simpl. simpl_reg_eqb. reflexivity.
@@ -583,11 +574,11 @@ Section FlattenExpr.
   Definition ExprImp2FlatImp(s: Syntax.cmd): FlatImp.stmt var func :=
     fst (flattenStmt (freshNameGenState (ExprImp.allVars_cmd s)) s).
 
-  Lemma flattenStmt_correct: forall fuelH sH sL initialM finalH finalM,
+  Lemma flattenStmt_correct: forall fuelH sH sL initialM finalH finalLogH finalM,
     ExprImp2FlatImp sH = sL ->
-    ExprImp.eval_cmd empty_map fuelH empty_map initialM sH = Some (finalH, finalM) ->
-    exists fuelL finalL,
-      FlatImp.eval_stmt _ _ empty_map fuelL empty_map initialM sL = Some (finalL, finalM) /\
+    ExprImp.eval_cmd_log empty_map fuelH empty_map EmptyMetricLog initialM sH = Some (finalH, finalLogH, finalM) ->
+    exists fuelL finalL finalLogL,
+      FlatImp.eval_stmt_log _ _ empty_map fuelL empty_map EmptyMetricLog initialM sL = Some (finalL, finalLogL, finalM) /\
       forall resVar res, get finalH resVar = Some res -> get finalL resVar = Some res.
   Proof.
     introv C EvH.
@@ -595,8 +586,8 @@ Section FlattenExpr.
     pose proof flattenStmt_correct_aux as P.
     specialize P with (1 := E).
     specialize P with (4 := EvH).
-    specialize P with (initialL := (@empty_map _ _ stateMap)).
-    destruct P as [fuelL [finalL [EvL ExtL]]].
+    specialize P with (initialL := (@empty_map _ _ stateMap)) (initialLogL := EmptyMetricLog).
+    destruct P as [fuelL [finalL [finalLogL [EvL [ExtL ELog]]]]].
     - unfold extends. auto.
     - unfold undef. intros. apply empty_is_empty.
     - unfold disjoint.
@@ -607,7 +598,7 @@ Section FlattenExpr.
       + left. clear -Ino actname_empty.
         intro. apply Ino.
         apply ExprImp.modVars_subset_allVars; assumption.
-    - exists fuelL finalL. apply (conj EvL).
+    - exists fuelL finalL finalLogL. apply (conj EvL).
       intros. state_calc.
   Qed.
 
