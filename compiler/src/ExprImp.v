@@ -467,4 +467,22 @@ Section ExprImp2.
       refine (only_differ_putmany _ _ _ _ _ _); eassumption.
   Qed.
 
+  Lemma modVarsSound_log: forall (e: env) fuel s initialS initialM initialLog finalS finalLog finalM,
+    eval_cmd_log e fuel initialS initialLog initialM s = Some (finalS, finalLog, finalM) ->
+    only_differ initialS (modVars s) finalS.
+  Proof.
+    induction fuel; introv Ev.
+    - discriminate.
+    - invert_eval_cmd_log; simpl in *; inversionss;
+      repeat match goal with
+      | IH: _, H: _ |- _ =>
+          let IH' := fresh IH in pose proof IH as IH';
+          specialize IH' with (1 := H);
+          simpl in IH';
+          ensure_new IH'
+      end;
+      state_calc.
+      refine (only_differ_putmany _ _ _ _ _ _); eassumption.
+  Qed.
+
 End ExprImp2.
