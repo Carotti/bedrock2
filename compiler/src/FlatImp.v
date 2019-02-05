@@ -5,6 +5,7 @@ Require Import riscv.util.ListLib.
 Require Import bedrock2.Semantics.
 Require Import riscv.Utility.
 Require Import riscv.MkMachineWidth.
+Require Import riscv.MetricLogging.
 Require Import coqutil.Macros.unique.
 Require Import bedrock2.Memory.
 Require compiler.NoActionSyntaxParams.
@@ -66,6 +67,8 @@ Module Import FlatImp.
     mem_ok :> map.ok mem;
 
     trace := list (mem * Syntax.actname * list word * (mem * list word));
+
+    metrics := MetricLog;
 
     ext_spec: trace -> mem -> Syntax.actname -> list word -> (mem -> list word -> Prop) -> Prop;
 
@@ -287,86 +290,93 @@ Section FlatImp1.
     Proof. inversion_lemma. Qed.
 
     (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
-    Implicit Types post : trace -> mem -> locals -> Prop.
+    Implicit Types post : trace -> mem -> locals -> metrics -> Prop.
 
     (* alternative semantics which allow non-determinism *)
     Inductive exec:
       stmt ->
-      trace -> mem -> locals ->
-      (trace -> mem -> locals -> Prop)
+      trace -> mem -> locals -> metrics ->
+      (trace -> mem -> locals -> metrics -> Prop)
     -> Prop :=
-    | ExInteract: forall t m l action argvars argvals resvars outcome post,
+    | ExInteract: forall t m l mc action argvars argvals resvars outcome post,
         option_all (List.map (map.get l) argvars) = Some argvals ->
         ext_spec t m action argvals outcome ->
         (forall m' resvals,
             outcome m' resvals ->
             exists l', map.putmany_of_list resvars resvals l = Some l' /\
-                       post (((m, action, argvals), (m', resvals)) :: t) m' l') ->
-        exec (SInteract resvars action argvars) t m l post
-    | ExCall: forall t m l binds fname args params rets fbody argvs st0 post outcome,
+                       post (((m, action, argvals), (m', resvals)) :: t) m' l' mc) ->
+        exec (SInteract resvars action argvars) t m l mc post
+    | ExCall: forall t m l mc binds fname args params rets fbody argvs st0 post outcome,
         map.get e fname = Some (params, rets, fbody) ->
         option_all (List.map (map.get l) args) = Some argvs ->
         map.putmany_of_list params argvs map.empty = Some st0 ->
-        exec fbody t m st0 outcome ->
-        (forall t' m' st1,
-            outcome t' m' st1 ->
+        exec fbody t m st0 mc outcome ->
+        (forall t' m' mc' st1,
+            outcome t' m' st1 mc' ->
             exists retvs l',
               option_all (List.map (map.get st1) rets) = Some retvs /\
               map.putmany_of_list binds retvs l = Some l' /\
-              post t' m' l') ->
-        exec (SCall binds fname args) t m l post
-    | ExLoad: forall t m l sz x a v addr post,
+              post t' m' l' mc') ->
+        exec (SCall binds fname args) t m l mc post
+    | ExLoad: forall t m l mc sz x a v addr post,
         map.get l a = Some addr ->
         load sz m addr = Some v ->
-        post t m (map.put l x v) ->
-        exec (SLoad sz x a) t m l post
-    | ExStore: forall t m m' l sz a addr v val post,
+        post t m (map.put l x v) mc ->
+        let mc' := addMetricLoads 1 mc in
+        exec (SLoad sz x a) t m l mc' post
+    | ExStore: forall t m m' l mc sz a addr v val post,
         map.get l a = Some addr ->
         map.get l v = Some val ->
         store sz m addr val = Some m' ->
-        post t m' l ->
-        exec (SStore sz a v) t m l post
-    | ExLit: forall t m l x v post,
-        post t m (map.put l x (ZToReg v)) ->
-        exec (SLit x v) t m l post
-    | ExOp: forall t m l x op y y' z z' post,
+        post t m' l mc ->
+        let mc' := addMetricStores 1 mc in
+        exec (SStore sz a v) t m l mc' post
+    | ExLit: forall t m l mc x v post,
+        post t m (map.put l x (ZToReg v)) mc ->
+        let mc' := addMetricInstructions 1 mc in
+        exec (SLit x v) t m l mc' post
+    | ExOp: forall t m l mc x op y y' z z' post,
         map.get l y = Some y' ->
         map.get l z = Some z' ->
-        post t m (map.put l x (interp_binop op y' z')) ->
-        exec (SOp x op y z) t m l post
-    | ExSet: forall t m l x y y' post,
+        post t m (map.put l x (interp_binop op y' z')) mc ->
+        let mc' := addMetricInstructions 1 mc in
+        exec (SOp x op y z) t m l mc' post
+    | ExSet: forall t m l mc x y y' post,
         map.get l y = Some y' ->
-        post t m (map.put l x y') ->
-        exec (SSet x y) t m l post
-    | ExIfThen: forall t m l cond  bThen bElse post,
+        post t m (map.put l x y') mc ->
+        let mc' := addMetricStores 1 mc in
+        exec (SSet x y) t m l mc' post
+    | ExIfThen: forall t m l mc cond  bThen bElse post,
         eval_bcond l cond = Some true ->
-        exec bThen t m l post ->
-        exec (SIf cond bThen bElse) t m l post
-    | ExIfElse: forall t m l cond bThen bElse post,
+        exec bThen t m l mc post ->
+        let mc' := addMetricJumps 1 mc in
+        exec (SIf cond bThen bElse) t m l mc' post
+    | ExIfElse: forall t m l mc cond bThen bElse post,
         eval_bcond l cond = Some false ->
-        exec bElse t m l post ->
-        exec (SIf cond bThen bElse) t m l post
-    | ExLoop: forall t m l cond body1 body2 mid post,
+        exec bElse t m l mc post ->
+        let mc' := addMetricJumps 1 mc in 
+        exec (SIf cond bThen bElse) t m l mc' post
+    | ExLoop: forall t m l mc cond body1 body2 mid post,
         (* this case is carefully crafted in such a way that recursive uses of exec
          only appear under forall and ->, but not under exists, /\, \/, to make sure the
          auto-generated induction principle contains an IH for both recursive uses *)
-        exec body1 t m l mid ->
-        (forall t' m' l', mid t' m' l' -> eval_bcond l' cond <> None) ->
-        (forall t' m' l',
-            mid t' m' l' ->
-            eval_bcond l' cond = Some false -> post t' m' l') ->
-        (forall t' m' l',
-            mid t' m' l' ->
+        exec body1 t m l mc mid ->
+        (forall t' m' l' mc', mid t' m' l' mc' -> eval_bcond l' cond <> None) ->
+        (forall t' m' l' mc',
+            mid t' m' l' mc' ->
+            eval_bcond l' cond = Some false -> post t' m' l' mc') ->
+        (forall t' m' l' mc',
+            mid t' m' l' mc' ->
             eval_bcond l' cond = Some true ->
-            exec (SSeq body2 (SLoop body1 cond body2)) t' m' l' post) ->
-        exec (SLoop body1 cond body2) t m l post
-    | ExSeq: forall t m l s1 s2 mid post,
-        exec s1 t m l mid ->
-        (forall t' m' l', mid t' m' l' -> exec s2 t' m' l' post) ->
-        exec (SSeq s1 s2) t m l post
-    | ExSkip: forall t m l post,
-        post t m l ->
-        exec SSkip t m l post.
+            exec (SSeq body2 (SLoop body1 cond body2)) t' m' l' mc' post) ->
+        exec (SLoop body1 cond body2) t m l mc post
+    | ExSeq: forall t m l mc s1 s2 mid post,
+        exec s1 t m l mc mid ->
+        (forall t' m' l' mc', mid t' m' l' mc' -> exec s2 t' m' l' mc' post) ->
+        exec (SSeq s1 s2) t m l mc post
+    | ExSkip: forall t m l mc post,
+        post t m l mc ->
+        exec SSkip t m l mc post.
 
   End WithEnv.
 
