@@ -15,6 +15,7 @@ Require Import riscv.Run.
 Require Import riscv.Memory.
 Require Import riscv.util.PowerFunc.
 Require Import riscv.util.ListLib.
+Require Import riscv.MetricLogging.
 Require Import coqutil.Decidable.
 Require Import Coq.Program.Tactics.
 Require Import Coq.Bool.Bool.
@@ -110,8 +111,9 @@ Section Proofs.
       valid_register a ->
       map.get initialL.(getRegs) a = Some addr ->
       Memory.load sz (getMem initialL) addr = Some v ->
+      let initialLMetrics := updateMetrics (addMetricLoads 1) initialL in
       mcomp_sat (f tt)
-                (withRegs (map.put initialL.(getRegs) x v) initialL) post ->
+                (withRegs (map.put initialL.(getRegs) x v) initialLMetrics) post ->
       mcomp_sat (Bind (execute (compile_load RV32IM sz x a 0)) f) initialL post.
   Proof.
     intros. unfold compile_load.
@@ -128,7 +130,8 @@ Section Proofs.
       map.get initialL.(getRegs) x = Some v ->
       map.get initialL.(getRegs) a = Some addr ->
       Memory.store sz (getMem initialL) addr v = Some m' ->
-      mcomp_sat (f tt) (withMem m' initialL) post ->
+      let initialLMetrics := updateMetrics (addMetricStores 1) initialL in
+      mcomp_sat (f tt) (withMem m' initialLMetrics) post ->
       mcomp_sat (Bind (execute (compile_store RV32IM sz a x 0)) f) initialL post.
   Proof.
     intros. unfold compile_store.
