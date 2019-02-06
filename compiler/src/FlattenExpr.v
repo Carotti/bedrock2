@@ -8,6 +8,7 @@ Require Import bbv.DepEqNat.
 Require Import coqutil.Decidable.
 Require Import riscv.Memory.
 Require Import riscv.Utility.
+Require Import riscv.MetricLogging.
 Require Import bedrock2.Syntax.
 Require Import bedrock2.Semantics. (* TODO: this should be in bedrock2.Semantics *)
 Require Import coqutil.Macros.unique.
@@ -954,7 +955,8 @@ Section FlattenExpr.
   Lemma flattenStmt_correct: forall m sH sL post,
     ExprImp2FlatImp sH = sL ->
     exec map.empty sH nil m map.empty post ->
-    FlatImp.exec map.empty sL nil m map.empty post.
+    exists mc,
+    FlatImp.exec map.empty sL nil m map.empty mc (FlatImp.addMetrics_post post).
   Admitted.
 
 End FlattenExpr.

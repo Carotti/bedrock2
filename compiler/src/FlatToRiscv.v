@@ -124,11 +124,11 @@ Module Import FlatToRiscv.
       initialL.(getNextPc) = word.add initialL.(getPc) (word.of_Z 4) ->
       ext_guarantee initialL ->
       exec map.empty (@SInteract (@FlatImp.syntax_params FlatImp_params) resvars action argvars)
-           initialL.(getLog) initialMH initialL.(getRegs) postH ->
+           initialL.(getLog) initialMH initialL.(getRegs) initialL.(getMetrics) postH ->
       runsTo (mcomp_sat (run1 iset)) initialL
              (fun finalL =>
-                  (* external calls can't modify the memory for now *)
-                  postH finalL.(getLog) initialMH finalL.(getRegs) /\
+                  (* external calls can't modify the memory or metrics for now *)
+                  postH finalL.(getLog) initialMH finalL.(getRegs) finalL.(getMetrics) /\
                   finalL.(getPc) = newPc /\
                   finalL.(getNextPc) = add newPc (ZToReg 4) /\
                   (program initialL.(getPc) insts * eq initialMH * R)%sep finalL.(getMem) /\
@@ -878,8 +878,8 @@ Section FlatToRiscv1.
      In order to prove compile_ext_call_correct for MMIO, its FlatImp execution needs to be
      passed the whole memory, and that's why we also need the whole memory for FlatImp here. *)
   Lemma compile_stmt_correct_aux:
-    forall (s: @stmt (@FlatImp.syntax_params (@FlatImp_params p))) t initialMH initialRegsH postH R,
-    eval_stmt s t initialMH initialRegsH postH ->
+    forall (s: @stmt (@FlatImp.syntax_params (@FlatImp_params p))) t initialMH initialRegsH initialMetrics postH R,
+    eval_stmt s t initialMH initialRegsH initialMetrics postH ->
     forall initialL insts,
     @compile_stmt def_params iset s = insts ->
     stmt_not_too_big s ->
@@ -888,10 +888,11 @@ Section FlatToRiscv1.
     initialL.(getRegs) = initialRegsH ->
     (program initialL.(getPc) insts * eq initialMH * R)%sep initialL.(getMem) ->
     initialL.(getLog) = t ->
+    initialL.(getMetrics) = initialMetrics ->
     initialL.(getNextPc) = add initialL.(getPc) (ZToReg 4) ->
     ext_guarantee initialL ->
-    runsTo initialL (fun finalL => exists finalML,
-          postH finalL.(getLog) finalML finalL.(getRegs) /\
+    runsTo initialL (fun finalL => exists finalML finalMetrics,
+          postH finalL.(getLog) finalML finalL.(getRegs) finalMetrics /\
           (program initialL.(getPc) insts * eq finalML * R)%sep finalL.(getMem) /\
           finalL.(getPc) = add initialL.(getPc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
           finalL.(getNextPc) = add finalL.(getPc) (ZToReg 4) /\
@@ -914,7 +915,6 @@ Section FlatToRiscv1.
         eapply @ExInteract; try eassumption.
       + simpl. intros finalL A. destruct_RiscvMachine finalL. simpl in *.
         destruct_products. subst. eauto 7.
-
     - (* SCall *)
       match goal with
       | A: map.get map.empty _ = Some _ |- _ =>
@@ -948,13 +948,13 @@ Section FlatToRiscv1.
           { exact H8. }
           { ecancel. }
           { exact A. }
-      + run1done. eexists. repeat split; try eassumption.
+      + run1done. eexists. eexists. repeat split; try eassumption.
         * match goal with
-          | H: post _ _ (map.put _ _ ?v) |- post _ _ (map.put _ _ ?v') =>
+          | H: post _ _ (map.put _ _ ?v) _ |- post _ _ (map.put _ _ ?v') _ =>
             assert (v = v') as F
           end.
           { (* TODO meh why so many conversions? *) admit. }
-          rewrite <- F. assumption.
+          rewrite <- F. eassumption.
         * solve_word_eq word_ok.
         * eapply ext_guarantee_preservable; [eassumption | simpl; intuition idtac | reflexivity ].
 

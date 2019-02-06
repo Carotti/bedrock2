@@ -292,6 +292,11 @@ Section FlatImp1.
     (* COQBUG(unification finds Type instead of Prop and fails to downgrade *)
     Implicit Types post : trace -> mem -> locals -> metrics -> Prop.
 
+    (* Add metrics to a post condition which says nothing about metrics *)
+    Definition addMetrics_post(postcond : trace -> mem -> locals -> Prop):
+      trace -> mem -> locals -> metrics -> Prop :=
+      fun t m l mc => postcond t m l.
+
     (* alternative semantics which allow non-determinism *)
     Inductive exec:
       stmt ->
@@ -301,10 +306,10 @@ Section FlatImp1.
     | ExInteract: forall t m l mc action argvars argvals resvars outcome post,
         option_all (List.map (map.get l) argvars) = Some argvals ->
         ext_spec t m action argvals outcome ->
-        (forall m' resvals,
+        (forall m' mc' resvals,
             outcome m' resvals ->
             exists l', map.putmany_of_list resvars resvals l = Some l' /\
-                       post (((m, action, argvals), (m', resvals)) :: t) m' l' mc) ->
+                       post (((m, action, argvals), (m', resvals)) :: t) m' l' mc') ->
         exec (SInteract resvars action argvars) t m l mc post
     | ExCall: forall t m l mc binds fname args params rets fbody argvs st0 post outcome,
         map.get e fname = Some (params, rets, fbody) ->

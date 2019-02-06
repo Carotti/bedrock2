@@ -319,8 +319,9 @@ Instance FlatToRiscv_params: FlatToRiscv.parameters := (*unshelve refine ( *) {|
         simpl.
         repeat split.
         + unfold mmioLoadEvent.
-          specialize (H16 initialMem [signedByteTupleToReg a]).
-          destruct H16 as [ l' [A B] ].
+          specialize H17 with (m' := initialMem) (resvals := [signedByteTupleToReg a]).
+          evar (mc : MetricLogging.MetricLog). specialize (H17 mc).
+          destruct H17 as [ l' [A B] ].
           { (* TODO trace translation *) admit. }
           { inversion_option.
             subst l'.
