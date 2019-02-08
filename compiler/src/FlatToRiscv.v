@@ -125,11 +125,11 @@ Module Import FlatToRiscv.
       initialL.(getNextPc) = word.add initialL.(getPc) (word.of_Z 4) ->
       ext_guarantee initialL ->
       exec map.empty (@SInteract (@FlatImp.syntax_params FlatImp_params) resvars action argvars)
-           initialL.(getLog) initialMH initialL.(getRegs) postH ->
+           initialL.(getLog) initialMH initialL.(getRegs) initialL.(getMetrics) postH ->
       runsTo (mcomp_sat (run1 iset)) initialL
              (fun finalL =>
-                  (* external calls can't modify the memory for now *)
-                  postH finalL.(getLog) initialMH finalL.(getRegs) /\
+                  (* external calls can't modify the memory or metrics for now *)
+                  postH finalL.(getLog) initialMH finalL.(getRegs) finalL.(getMetrics) /\
                   finalL.(getPc) = newPc /\
                   finalL.(getNextPc) = add newPc (ZToReg 4) /\
                   (program initialL.(getPc) insts * eq initialMH * R)%sep finalL.(getMem) /\
@@ -860,8 +860,8 @@ Section FlatToRiscv1.
   Qed.
 
   Lemma compile_stmt_correct_aux:
-    forall (s: @stmt (@FlatImp.syntax_params (@FlatImp_params p))) t initialMH initialRegsH postH R,
-    eval_stmt s t initialMH initialRegsH postH ->
+    forall (s: @stmt (@FlatImp.syntax_params (@FlatImp_params p))) t initialMH initialRegsH postH initialMetricsH R,
+    eval_stmt s t initialMH initialRegsH initialMetricsH postH ->
     forall initialL insts,
     @compile_stmt def_params iset s = insts ->
     stmt_not_too_big s ->
@@ -872,8 +872,8 @@ Section FlatToRiscv1.
     initialL.(getLog) = t ->
     initialL.(getNextPc) = add initialL.(getPc) (ZToReg 4) ->
     ext_guarantee initialL ->
-    runsTo initialL (fun finalL => exists finalMH,
-          postH finalL.(getLog) finalMH finalL.(getRegs) /\
+    runsTo initialL (fun finalL => exists finalMH finalMetrics,
+          postH finalL.(getLog) finalMH finalL.(getRegs) finalMetrics /\
           (program initialL.(getPc) insts * eq finalMH * R)%sep finalL.(getMem) /\
           finalL.(getPc) = add initialL.(getPc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
           finalL.(getNextPc) = add finalL.(getPc) (ZToReg 4) /\

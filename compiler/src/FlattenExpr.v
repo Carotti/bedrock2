@@ -950,10 +950,16 @@ Section FlattenExpr.
       intros. state_calc.
   Qed.
 
+  (* Just while ExprImp doesn't have metrics *)
+  Definition addMetrics_post(postcond : trace -> mem -> locals -> Prop):
+    trace -> mem -> locals -> FlatImp.FlatImp.metrics -> Prop :=
+    fun t m l mc => postcond t m l.
+
   Lemma flattenStmt_correct: forall m sH sL post,
     ExprImp2FlatImp sH = sL ->
     exec map.empty sH nil m map.empty post ->
-    FlatImp.exec map.empty sL nil m map.empty post.
+    exists mc,
+    FlatImp.exec map.empty sL nil m map.empty mc (addMetrics_post post).
   Admitted.
 
 End FlattenExpr.
