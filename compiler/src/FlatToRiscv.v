@@ -859,6 +859,13 @@ Section FlatToRiscv1.
       eauto using disjoint_putmany_preserves_store_bytes.
   Qed.
 
+  Definition metric_bound_post(post: MetricLog -> Prop): Prop := forall m1 m2,
+      m1.(instructions) <= 1 * m1.(instructions) ->
+      m1.(jumps) <= 1 * m2.(jumps) ->
+      m1.(loads) <= 1 * m2.(loads) ->
+      m1.(stores) <= 1 * m2.(stores) ->
+      post m2 -> post m1.
+
   Lemma compile_stmt_correct_aux:
     forall (s: @stmt (@FlatImp.syntax_params (@FlatImp_params p))) t initialMH initialRegsH postH initialMetricsH R,
     eval_stmt s t initialMH initialRegsH initialMetricsH postH ->
@@ -872,8 +879,8 @@ Section FlatToRiscv1.
     initialL.(getLog) = t ->
     initialL.(getNextPc) = add initialL.(getPc) (ZToReg 4) ->
     ext_guarantee initialL ->
-    runsTo initialL (fun finalL => exists finalMH finalMetrics,
-          postH finalL.(getLog) finalMH finalL.(getRegs) finalMetrics /\
+    runsTo initialL (fun finalL => exists finalMH,
+          metric_bound_post (postH finalL.(getLog) finalMH finalL.(getRegs)) /\
           (program initialL.(getPc) insts * eq finalMH * R)%sep finalL.(getMem) /\
           finalL.(getPc) = add initialL.(getPc) (mul (ZToReg 4) (ZToReg (Zlength insts))) /\
           finalL.(getNextPc) = add finalL.(getPc) (ZToReg 4) /\
