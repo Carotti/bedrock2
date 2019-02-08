@@ -28,6 +28,7 @@ Require Import compiler.util.Common.
 Require Import riscv.Utility.
 Require Import riscv.MkMachineWidth.
 Require Import riscv.runsToNonDet.
+Require Import riscv.MetricLogging.
 Require Import compiler.Rem4.
 Require Import compiler.FlatToRiscvDef.
 Require Import compiler.GoFlatToRiscv.

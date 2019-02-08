@@ -17,6 +17,7 @@ Require Import riscv.proofs.DecodeEncode.
 Require Import riscv.Run.
 Require Import riscv.MkMachineWidth.
 Require Import riscv.util.Monads.
+Require Import riscv.MetricLogging.
 
 
 Local Open Scope Z_scope.
@@ -43,6 +44,7 @@ Section Equiv.
     getNextPc := f.(nextCounter);
     getMem := Memory.unchecked_store_bytes 4 map.empty f.(counter) NOP;
     getLog := nil;
+    getMetrics := EmptyMetricLog;
   |}.
 
   Definition to_Fake(m: RiscvMachine Register Action): FakeProcessor := {|
