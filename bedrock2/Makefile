@@ -11,7 +11,7 @@ VS:=$(shell find $(SRCDIR) -type f -name '*.v')
 DEPS_DIR ?= ../deps
 
 # Note: make does not interpret "\n", and this is intended
-DEPFLAGS_NL=-Q src bedrock2\n-Q $(DEPS_DIR)/coqutil/src coqutil\n
+DEPFLAGS_NL=-Q src bedrock2\n-Q $(DEPS_DIR)/coqutil/src coqutil\n-Q $(DEPS_DIR)/riscv-coq/src riscv\n
 DEPFLAGS=$(subst \n, ,$(DEPFLAGS_NL))
 
 _CoqProject:
@@ -19,7 +19,7 @@ _CoqProject:
 
 all: Makefile.coq.all $(VS)
 	$(MAKE) -f Makefile.coq.all
-
+:
 COQ_MAKEFILE := $(COQBIN)coq_makefile -f _CoqProject INSTALLDEFAULTROOT = bedrock2 $(COQMF_ARGS)
 
 Makefile.coq.all: force _CoqProject
